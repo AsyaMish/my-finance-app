@@ -1,38 +1,45 @@
-const CACHE_NAME = 'finance-app-v4';
+const CACHE_NAME = 'finance-app-v5';
 const ASSETS = [
-  './',
-  './index.html',
-  './style.css',
-  './script.js',
-  './manifest.json',
-  './icon-512.png'
+  './', './index.html', './style.css',
+  './script.js', './manifest.json', './icon-512.png'
 ];
 
-// Установка: кэшируем все файлы
 self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
-  );
+  e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(ASSETS)));
   self.skipWaiting();
 });
 
-// Активация: удаляем старый кэш, если обновилась версия
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) return caches.delete(key);
-        })
-      );
-    })
+    caches.keys().then((keys) =>
+      Promise.all(keys.map((key) => key !== CACHE_NAME ? caches.delete(key) : null)))
   );
   self.clients.claim();
 });
 
-// Перехват запросов: отдаем из кэша, если нет интернета
 self.addEventListener('fetch', (e) => {
+  // Навигация (index.html): сначала сеть, кэш — только для офлайна
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((c) => c.put('./index.html', copy));
+          return res;
+        })
+        .catch(() => caches.match('./index.html'))
+    );
+    return;
+  }
+  // Остальные файлы: кэш + фоновое обновление на следующий запуск
   e.respondWith(
-    caches.match(e.request).then((res) => res || fetch(e.request))
+    caches.match(e.request).then((cached) => {
+      const fresh = fetch(e.request).then((r) => {
+        const copy = r.clone();
+        caches.open(CACHE_NAME).then((c) => c.put(e.request, copy));
+        return r;
+      }).catch(() => cached);
+      return cached || fresh;
+    })
   );
 });
