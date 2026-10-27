@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="system">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Мои финансы</title>
+  <meta name="theme-color" content="#ffffff">
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+  <!-- ===== ШАПКА (десктоп) ===== -->
+  <header class="app-header desktop-only">
+    <h1>Мои финансы</h1>
+    <nav class="main-nav">
+      <button data-screen="dashboard" class="active">Дашборд</button>
+      <button data-screen="history">История</button>
+      <button data-screen="reports">Отчёты</button>
+      <button data-screen="archive">Архив</button>
+      <button data-screen="settings">Настройки</button>
+    </nav>
+    <button id="btn-theme-toggle" class="btn-small theme-toggle" title="Переключить тему">🌓</button>
+  </header>
+
+  <main>
+
+    <!-- ===== ЭКРАН: ДАШБОРД ===== -->
+    <section id="screen-dashboard" class="screen active">
+      <div class="dashboard-grid">
+        <div class="card">
+          <h2>Баланс</h2>
+          <div id="balance-accounts"></div>
+          <div class="total">Итого: <span id="balance-total">0.00</span> ₽</div>
+        </div>
+        <div class="card">
+          <h2>Приход и расход <span id="period-label" class="period-label">за неделю</span></h2>
+          <div class="period-switch">
+            <button data-dashboard-period="week" class="active">Неделя</button>
+            <button data-dashboard-period="month">Месяц</button>
+            <button data-dashboard-period="custom" id="dashboard-period-custom" title="Выбрать период">📅</button>
+          </div>
+          <div id="dashboard-custom-period" class="custom-period hidden">
+            <label>С <input type="date" id="dashboard-date-from"></label>
+            <label>По <input type="date" id="dashboard-date-to"></label>
+          </div>
+          <div class="income-expense">
+            <div>Приход: <span id="dash-income" class="income">0.00</span> ₽</div>
+            <div>Расход: <span id="dash-expense" class="expense">0.00</span> ₽</div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Долги</h2>
+          <div>Я должна: <span id="debts-i-owe" class="expense">0.00</span> ₽</div>
+          <div>Мне должны: <span id="debts-owed-to-me" class="income">0.00</span> ₽</div>
+        </div>
+        <div class="card">
+          <h2>Планируемые расходы</h2>
+          <div>Сумма: <span id="dash-planned-expenses" class="expense">0.00</span> ₽</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== ЭКРАН: ИСТОРИЯ ===== -->
+    <section id="screen-history" class="screen">
+      <div class="history-header">
+        <h2>История</h2>
+        <button id="btn-toggle-filters" class="btn-small">Фильтры ▾</button>
+      </div>
+      <div id="filters-panel" class="filters-panel hidden">
+        <input type="text" id="filter-search" placeholder="Поиск по комментарию, категории, долгу...">
+        <div class="filters-row">
+          <select id="filter-type">
+            <option value="">Все типы</option>
+            <option value="income">Доходы</option>
+            <option value="expense">Расходы</option>
+            <option value="debt">Долги</option>
+          </select>
+          <select id="filter-account"><option value="">Все счета</option></select>
+          <select id="filter-category"><option value="">Все категории</option></select>
+          <select id="filter-status">
+            <option value="all">Все статусы</option>
+            <option value="fact">Факт</option>
+            <option value="plan">План</option>
+          </select>
+        </div>
+        <div class="filters-row">
+          <select id="filter-period">
+            <option value="all">Всё время</option>
+            <option value="current-month">Текущий месяц</option>
+            <option value="previous-month">Прошлый месяц</option>
+            <option value="custom">Произвольный период</option>
+          </select>
+          <div id="filter-custom-period" class="custom-period hidden">
+            <label>С <input type="date" id="filter-date-from"></label>
+            <label>По <input type="date" id="filter-date-to"></label>
+          </div>
+        </div>
+        <div class="filters-row">
+          <label class="checkbox-label"><input type="checkbox" id="filter-has-debt"> Только с привязкой к долгу</label>
+          <label class="checkbox-label"><input type="checkbox" id="filter-has-nested"> Только с детализацией</label>
+        </div>
+        <div class="filters-row">
+          <input type="number" id="filter-sum-from" step="0.01" inputmode="decimal" placeholder="Сумма от">
+          <input type="number" id="filter-sum-to" step="0.01" inputmode="decimal" placeholder="Сумма до">
+        </div>
+        <button id="btn-reset-filters" class="btn-secondary">Сбросить фильтры</button>
+      </div>
+      <div class="mass-actions hidden" id="mass-actions">
+        <span>Выбрано: <span id="selected-count">0</span></span>
+        <button id="btn-mass-archive" class="btn-small">В архив</button>
+        <button id="btn-mass-delete" class="btn-danger btn-small">Удалить</button>
+        <button id="btn-mass-cancel" class="btn-secondary btn-small">Отмена</button>
+      </div>
+      <div class="operations-list" id="operations-list"></div>
+      <div class="empty-state hidden" id="operations-empty">Пока нет записей. Нажмите «+», чтобы добавить.</div>
+    </section>
+
+    <!-- ===== ЭКРАН: ОТЧЁТЫ ===== -->
+    <section id="screen-reports" class="screen">
+      <h2>Отчёты</h2>
+      <div class="report-tabs">
+        <button data-report="fact" class="active">Факт</button>
+        <button data-report="plan">План</button>
+        <button data-report="debts">Долги</button>
+      </div>
+      <div class="report-period">
+        <label>Период
+          <select id="report-period-select">
+            <option value="current-month">Текущий месяц</option>
+            <option value="custom">Произвольный</option>
+            <option value="all">Всё время</option>
+          </select>
+        </label>
+        <div id="report-custom-period" class="hidden">
+          <label>С <input type="date" id="report-date-from"></label>
+          <label>По <input type="date" id="report-date-to"></label>
+        </div>
+      </div>
+      <div id="report-content" class="report-content"></div>
+    </section>
+
+    <!-- ===== ЭКРАН: АРХИВ ===== -->
+    <section id="screen-archive" class="screen">
+      <h2>Архив</h2>
+      <div class="archive-actions">
+        <button id="btn-manual-archive" class="btn-secondary">Архивировать выбранные</button>
+        <button id="btn-export-archive" class="btn-secondary">Экспорт архива</button>
+        <button id="btn-import-archive" class="btn-secondary">Импорт архива</button>
+        <input type="file" id="archive-file-input" accept=".json" class="hidden">
+      </div>
+      <div class="archive-years" id="archive-years"></div>
+      <div class="archive-list" id="archive-list"></div>
+      <div class="empty-state hidden" id="archive-empty">Архив пуст.</div>
+    </section>
+
+    <!-- ===== ЭКРАН: НАСТРОЙКИ ===== -->
+    <section id="screen-settings" class="screen">
+      <h2>Настройки</h2>
+      <div class="settings-section">
+        <h3>Счета</h3>
+        <div id="accounts-list"></div>
+        <button id="btn-add-account" class="btn-small">+ Добавить счёт</button>
+      </div>
+      <div class="settings-section">
+        <h3>Категории доходов</h3>
+        <div id="income-categories-list"></div>
+        <button id="btn-add-income-category" class="btn-small">+ Добавить категорию</button>
+      </div>
+      <div class="settings-section">
+        <h3>Категории расходов</h3>
+        <div id="expense-categories-list"></div>
+        <button id="btn-add-expense-category" class="btn-small">+ Добавить категорию</button>
+      </div>
+      <div class="settings-section">
+        <h3>Шаблоны</h3>
+        <div id="templates-list"></div>
+        <button id="btn-add-template" class="btn-small">+ Добавить шаблон</button>
+      </div>
+      <div class="settings-section">
+        <h3>Тема оформления</h3>
+        <div class="theme-options">
+          <label class="checkbox-label"><input type="radio" name="theme" value="system" checked> Системная</label>
+          <label class="checkbox-label"><input type="radio" name="theme" value="light"> Светлая</label>
+          <label class="checkbox-label"><input type="radio" name="theme" value="dark"> Тёмная</label>
+        </div>
+        <div class="hint">По умолчанию — как в системе. Можно переключить в любой момент.</div>
+      </div>
+      <div class="settings-section">
+        <h3>Экспорт и импорт данных</h3>
+        <div class="export-import-buttons">
+          <button id="btn-export-json" class="btn-small">Экспорт JSON</button>
+          <button id="btn-export-csv" class="btn-small">Экспорт CSV</button>
+          <button id="btn-export-txt" class="btn-small">Экспорт TXT</button>
+          <button id="btn-export-pdf" class="btn-small">Экспорт PDF</button>
+          <button id="btn-import-json" class="btn-small">Импорт JSON</button>
+          <button id="btn-import-csv" class="btn-small">Импорт CSV</button>
+          <input type="file" id="import-json-input" accept=".json" class="hidden">
+          <input type="file" id="import-csv-input" accept=".csv" class="hidden">
+        </div>
+        <div class="hints">
+          <p><b>JSON</b> — полная резервная копия. Восстанавливает все данные.</p>
+          <p><b>CSV</b> — выгрузка операций для Excel / Google Таблиц (числа с точкой, разделитель «;»).</p>
+          <p><b>TXT</b> — читаемый текстовый отчёт.</p>
+          <p><b>PDF</b> — отчёт для печати (можно сохранить как PDF).</p>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h3>Хранилище</h3>
+        <div id="storage-info">Загрузка информации...</div>
+        <div class="storage-bar"><div id="storage-bar-fill"></div></div>
+        <button id="btn-request-persist" class="btn-small">Разрешить постоянное хранение</button>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== НИЖНЯЯ НАВИГАЦИЯ (телефон) ===== -->
+  <nav class="bottom-nav mobile-only">
+    <button data-screen="dashboard" class="active">Дашборд</button>
+    <button data-screen="history">История</button>
+    <button data-screen="reports">Отчёты</button>
+    <button data-screen="archive">Архив</button>
+    <button data-screen="settings">Настройки</button>
+  </nav>
+
+  <!-- ===== ПЛАВАЮЩАЯ КНОПКА "+" ===== -->
+  <button id="fab-add" class="fab" title="Добавить">+</button>
+
+  <!-- ===== МОДАЛЬНОЕ ОКНО: ВЫБОР, ЧТО ДОБАВИТЬ ===== -->
+  <div id="modal-add-choice" class="modal hidden">
+    <div class="modal-content">
+      <button class="modal-x" type="button" aria-label="Закрыть">×</button>
+      <h3>Что добавить?</h3>
+      <div class="add-choice-buttons">
+        <button data-add="income" class="btn-primary">Доход</button>
+        <button data-add="expense" class="btn-primary">Расход</button>
+        <button data-add="debt" class="btn-secondary">Долг</button>
+      </div>
+      <button class="modal-close btn-secondary">Отмена</button>
+    </div>
+  </div>
+
+  <!-- ===== МОДАЛЬНОЕ ОКНО: ФОРМА ОПЕРАЦИИ ===== -->
+  <div id="modal-operation" class="modal hidden">
+    <div class="modal-content modal-wide">
+      <button class="modal-x" type="button" aria-label="Закрыть">×</button>
+      <h2 id="operation-form-title">Новая операция</h2>
+      <form id="operation-form" onsubmit="return false;">
+        <input type="hidden" id="operation-id">
+        <label>Тип операции
+          <select id="op-type">
+            <option value="expense">Расход</option>
+            <option value="income">Доход</option>
+          </select>
+        </label>
+        <label>Сумма (₽)
+          <input type="number" id="op-amount" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
+        </label>
+        <label>Счёт
+          <select id="op-account"></select>
+        </label>
+        <label>Категория
+          <select id="op-category"></select>
+        </label>
+        <div class="form-field">
+          <label for="op-date">Дата</label>
+          <div class="date-field">
+            <input type="date" id="op-date">
+            <button type="button" id="op-date-clear" class="btn-clear" title="Очистить дату">×</button>
+          </div>
+        </div>
+        <label>Комментарий
+          <textarea id="op-comment" rows="2" placeholder="Например: оплата кредита"></textarea>
+        </label>
+        <div class="checkbox-group">
+          <label class="checkbox-label"><input type="checkbox" id="op-is-planned"> Планируемое</label>
+          <label class="checkbox-label"><input type="checkbox" id="op-exclude-balance"> Не учитывать в балансе</label>
+        </div>
+        <label>Связать с долгом
+          <select id="op-linked-debt"><option value="">— Не связывать —</option></select>
+        </label>
+        <div class="nested-fields">
+          <div class="nested-header">
+            <h3>Детализация</h3>
+            <button type="button" id="btn-add-nested-field" class="btn-small">+ Добавить поле</button>
+          </div>
+          <div id="nested-fields-list"></div>
+          <div id="manual-sum-indicator" class="manual-indicator hidden">
+            <span>Сумма введена вручную</span>
+            <button type="button" id="btn-recalc" class="btn-small">Разблокировать детализацию</button>
+          </div>
+        </div>
+        <div class="template-picker">
+          <label>Или выбрать из шаблона
+            <select id="op-template"><option value="">— Без шаблона —</option></select>
+          </label>
+        </div>
+        <div class="form-buttons">
+          <button type="submit" class="btn-primary">Сохранить</button>
+          <button type="button" id="btn-cancel-operation" class="btn-secondary">Отменить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== МОДАЛЬНОЕ ОКНО: ФОРМА ДОЛГА ===== -->
+  <div id="modal-debt" class="modal hidden">
+    <div class="modal-content modal-wide">
+      <button class="modal-x" type="button" aria-label="Закрыть">×</button>
+      <h2 id="debt-form-title">Новый долг</h2>
+      <form id="debt-form" onsubmit="return false;">
+        <input type="hidden" id="debt-id">
+        <label>Направление
+          <select id="debt-direction">
+            <option value="i-owe">Я должна</option>
+            <option value="owed-to-me">Мне должны</option>
+          </select>
+        </label>
+        <label>Название / контрагент
+          <input type="text" id="debt-name" placeholder="Например: Кредит в банке">
+        </label>
+        <label>Сумма (₽)
+          <input type="number" id="debt-amount" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
+        </label>
+        <div class="checkbox-group">
+          <label class="checkbox-label"><input type="checkbox" id="debt-is-planned"> Планируемая</label>
+          <label class="checkbox-label"><input type="checkbox" id="debt-is-credit"> Это кредит</label>
+        </div>
+        <div id="credit-block" class="credit-block hidden">
+          <label>Срок (месяцев)
+            <input type="number" id="debt-term" min="1" inputmode="decimal" placeholder="12">
+          </label>
+          <label>Ставка (% годовых)
+            <input type="number" id="debt-rate" step="0.01" min="0" inputmode="decimal" placeholder="15.5">
+          </label>
+          <label>Итоговая сумма с процентами (₽)
+            <input type="number" id="debt-total" step="0.01" inputmode="decimal" placeholder="0.00">
+          </label>
+          <div class="hint">Рассчитывается автоматически (простые проценты). Можно править вручную.</div>
+        </div>
+        <div class="form-field">
+          <label for="debt-due-date">Дата возврата (необязательно)</label>
+          <div class="date-field">
+            <input type="date" id="debt-due-date">
+            <button type="button" id="debt-date-clear" class="btn-clear" title="Очистить дату">×</button>
+          </div>
+        </div>
+        <label>Комментарий
+          <textarea id="debt-comment" rows="2"></textarea>
+        </label>
+        <div class="form-buttons">
+          <button type="submit" class="btn-primary">Сохранить</button>
+          <button type="button" id="btn-cancel-debt" class="btn-secondary">Отменить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== МОДАЛЬНОЕ ОКНО ПОДТВЕРЖДЕНИЯ ===== -->
+  <div id="modal-confirm" class="modal hidden">
+    <div class="modal-content">
+      <button class="modal-x" type="button" aria-label="Закрыть">×</button>
+      <p id="modal-confirm-text"></p>
+      <div class="modal-buttons">
+        <button id="modal-confirm-yes" class="btn-danger">Да</button>
+        <button id="modal-confirm-no" class="btn-secondary">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ШАБЛОНЫ ДЛЯ РЕНДЕРА СПИСКОВ ===== -->
+  <template id="operation-item-template">
+    <div class="operation-item">
+      <input type="checkbox" class="op-select">
+      <div class="op-main">
+        <div class="op-row">
+          <span class="op-amount"></span>
+          <span class="op-category"></span>
+        </div>
+        <div class="op-row op-secondary">
+          <span class="op-account"></span>
+          <span class="op-date"></span>
+          <span class="op-badge op-badge-plan hidden">План</span>
+        </div>
+        <div class="op-comment"></div>
+      </div>
+      <div class="op-actions">
+        <button class="btn-small op-edit" title="Редактировать">✎</button>
+        <button class="btn-small op-copy" title="Копировать">⧉</button>
+        <button class="btn-small op-delete" title="Удалить">🗑</button>
+      </div>
+    </div>
+  </template>
+
+  <template id="account-item-template">
+    <div class="list-item">
+      <div class="list-item-main">
+        <span class="item-name"></span>
+        <span class="item-balance"></span>
+      </div>
+      <div class="item-actions">
+        <button class="btn-small item-edit" title="Редактировать">✎</button>
+        <button class="btn-small item-delete" title="Удалить">🗑</button>
+      </div>
+    </div>
+  </template>
+
+  <template id="income-category-item-template">
+    <div class="list-item">
+      <div class="list-item-main"><span class="item-name"></span></div>
+      <div class="item-actions">
+        <button class="btn-small item-edit" title="Редактировать">✎</button>
+        <button class="btn-small item-delete" title="Удалить">🗑</button>
+      </div>
+    </div>
+  </template>
+
+  <template id="expense-category-item-template">
+    <div class="list-item">
+      <div class="list-item-main"><span class="item-name"></span></div>
+      <div class="item-actions">
+        <button class="btn-small item-edit" title="Редактировать">✎</button>
+        <button class="btn-small item-delete" title="Удалить">🗑</button>
+      </div>
+    </div>
+  </template>
+
+  <template id="template-item-template">
+    <div class="list-item">
+      <div class="list-item-main">
+        <span class="item-name"></span>
+        <span class="item-fields-count"></span>
+      </div>
+      <div class="item-actions">
+        <button class="btn-small item-edit" title="Редактировать">✎</button>
+        <button class="btn-small item-copy" title="Копировать">⧉</button>
+        <button class="btn-small item-delete" title="Удалить">🗑</button>
+      </div>
+    </div>
+  </template>
+
+  <template id="archive-item-template">
+    <div class="archive-item">
+      <div class="archive-item-main">
+        <span class="arch-amount"></span>
+        <span class="arch-category"></span>
+        <span class="arch-date"></span>
+        <span class="arch-note"></span>
+      </div>
+      <button class="btn-small arch-restore" title="Восстановить из архива">↩</button>
+    </div>
+  </template>
+
+  <script src="script.js" defer></script>
+</body>
+</html>
