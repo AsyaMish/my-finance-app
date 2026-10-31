@@ -124,7 +124,9 @@ function renderTemplates() {
   const l = document.getElementById('templates-list'); if (!l) return; l.innerHTML = ''; const t = document.getElementById('template-item-template');
   state.templates.sort((a,b) => (a.createdAt||0) - (b.createdAt||0)).forEach(tpl => {
     const n = t.content.firstElementChild.cloneNode(true); n.querySelector('.item-name').textContent = tpl.name; n.querySelector('.item-fields-count').textContent = `(${tpl.fields.length} полей)`;
-    n.querySelector('.item-edit').onclick = () => openTemplateForm(tpl); n.querySelector('.item-delete').onclick = () => deleteTemplate(tpl.id); l.appendChild(n);
+    const btnEdit = n.querySelector('.item-edit'); if (btnEdit) btnEdit.onclick = () => openTemplateForm(tpl);
+    const btnDel = n.querySelector('.item-delete'); if (btnDel) btnDel.onclick = () => deleteTemplate(tpl.id);
+    l.appendChild(n);
   });
 }
 function openTemplateForm(t = null) {
@@ -248,7 +250,6 @@ function fillFilterSelects() {
 }
 function getFilteredOperations() {
   let ops = [...state.operations];
-  // ДОБАВЛЯЕМ ДОЛГИ В ИСТОРИЮ (как псевдо-операции для отображения)
   const fakeDebts = state.debts.filter(d => d.isPlanned).map(d => ({
     id: d.id, isDebt: true, type: d.direction === 'i-owe' ? 'expense' : 'income', amount: d.initialAmount || 0, date: d.dueDate || '', comment: d.comment || '', isPlanned: true, excludeFromBalance: true, accountId: '', categoryId: '', linkedDebtId: d.id
   }));
@@ -260,7 +261,28 @@ function getFilteredOperations() {
   const acc = document.getElementById('filter-account').value; if (acc) ops = ops.filter(o => o.accountId === acc);
   const cat = document.getElementById('filter-category').value; if (cat) ops = ops.filter(o => o.categoryId === cat);
   const status = document.getElementById('filter-status').value; if (status === 'fact') ops = ops.filter(o => !o.isPlanned); if (status === 'plan') ops = ops.filter(o => o.isPlanned);
-  const period = document.getElementById('filter-period').value; if (period !== 'all') { let f, t; if (period === 'current-month') { f = startOfMonthISO(); t = endOfMonthISO(); } else if (period === 'previous-month') { f = startOfPrevMonthISO(); t = endOfPrevMonthISO(); } else if (period === 'custom') { f = document.getElementById('filter-date-from').value; t = document.getElementById('filter-date-to').value; } if (f) ops = ops.filter(o => o.date && o.date >= f); if (t) ops = ops.filter(o => o.date && o.date <= t); }
+  
+  const period = document.getElementById('filter-period').value; 
+  if (period !== 'all') { 
+    let f, t; 
+    if (period === 'current-month') { f = startOfMonthISO(); t = endOfMonthISO(); } 
+    else if (period === 'previous-month') { f = startOfPrevMonthISO(); t = endOfPrevMonthISO(); } 
+    else if (period === 'custom') { f = document.getElementById('filter-date-from').value; t = document.getElementById('filter-date-to').value; } 
+    if (f) ops = ops.filter(o => o.date && o.date >= f); 
+    if (t) ops = ops.filter(o => o.date && o.date <= t); 
+  }
+  
+  const fHasDebt = document.getElementById('filter-has-debt');
+  if (fHasDebt && fHasDebt.checked) ops = ops.filter(o => !!o.linkedDebtId || o.isDebt);
+  
+  const fHasNested = document.getElementById('filter-has-nested');
+  if (fHasNested && fHasNested.checked) ops = ops.filter(o => o.nested && o.nested.length > 0);
+
+  const sumFrom = document.getElementById('filter-sum-from')?.value || '';
+  const sumTo = document.getElementById('filter-sum-to')?.value || '';
+  if (sumFrom !== '') ops = ops.filter(o => o.amount >= parseNumber(sumFrom));
+  if (sumTo !== '') ops = ops.filter(o => o.amount <= parseNumber(sumTo));
+
   ops.sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return kb - ka; });
   return ops;
 }
@@ -277,7 +299,6 @@ function renderOperations() {
     if (op.isPlanned) n.querySelector('.op-badge-plan').classList.remove('hidden');
     const cb = n.querySelector('.op-select'); if (op.isDebt) cb.style.display = 'none'; else { cb.checked = state.selectedOperations.has(op.id); cb.onchange = () => { if (cb.checked) state.selectedOperations.add(op.id); else state.selectedOperations.delete(op.id); updateMassActionsVisibility(); }; }
     
-    // КЛИКАБЕЛЬНОСТЬ
     n.querySelector('.op-main').onclick = (ev) => {
       if (ev.target.tagName === 'INPUT') return;
       if (op.isDebt) openDebtForm(debt);
@@ -293,7 +314,7 @@ function renderOperations() {
 function updateMassActionsVisibility() { document.getElementById('mass-actions').classList.toggle('hidden', state.selectedOperations.size === 0); document.getElementById('selected-count').textContent = state.selectedOperations.size; }
 async function deleteSelectedOperations() { const ids = Array.from(state.selectedOperations); if (!ids.length) return; if (!window.confirm('Удалить выбранные?')) return; for (const id of ids) await dbDelete('operations', id); state.operations = state.operations.filter(o => !state.selectedOperations.has(o.id)); state.selectedOperations.clear(); renderDashboard(); renderOperations(); fillDebtSelect(); }
 
-// ================= ОТЧЁТЫ (С КЛИКАБЕЛЬНОСТЬЮ) =================
+// ================= ОТЧЁТЫ =================
 function getReportPeriod() { const s = document.getElementById('report-period-select'); const m = s ? s.value : 'current-month'; if (m === 'all') return { from: null, to: null }; if (m === 'custom') return { from: document.getElementById('report-date-from').value || null, to: document.getElementById('report-date-to').value || null }; return { from: startOfMonthISO(), to: endOfMonthISO() }; }
 function operationInPeriod(o, f, t) { if (!o.date) return false; if (f && o.date < f) return false; if (t && o.date > t) return false; return true; }
 function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]); }
@@ -333,13 +354,10 @@ function renderReportPlan(f, t) {
   h += `<div class="card"><h3>Плановые операции (нажмите для перехода)</h3>`; if (!pO.length) h += '<div class="hint">Нет данных.</div>'; else pO.sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach(o => {
     const c = state.categories.find(x => x.id === o.categoryId); const d = state.debts.find(x => x.id === o.linkedDebtId);
     let l = `${o.date || 'Без даты'} · ${escapeHtml(c ? c.name : 'Без кат.')}`; if (d) l += ` · Долг: ${escapeHtml(d.name)}`; if (o.comment) l += ` · ${escapeHtml(o.comment)}`;
-    
-    // КЛИКАБЕЛЬНАЯ СТРОКА
     h += `<div class="report-row" onclick="openOperationForm(state.operations.find(x => x.id === '${o.id}'))"><span>${l}</span><span class="${o.type === 'income' ? 'income' : 'expense'}">${o.type === 'income' ? '+' : '−'}${formatMoney(o.amount)} ₽</span></div>`;
   }); h += `</div>`;
 
   h += `<div class="card"><h3>Планируемые долги</h3>`; if (!pD.length) h += '<div class="hint">Нет данных.</div>'; else pD.forEach(d => {
-    // КЛИКАБЕЛЬНАЯ СТРОКА
     h += `<div class="report-row" onclick="openDebtForm(state.debts.find(x => x.id === '${d.id}'))"><span>${d.direction === 'i-owe' ? 'Я должна' : 'Мне должны'}: ${escapeHtml(d.name)}</span><span class="hint">${d.initialAmount ? formatMoney(d.initialAmount) + ' ₽' : 'без суммы'}</span></div>`;
   }); h += `</div>`;
   return h;
@@ -406,7 +424,36 @@ async function importArchiveJSON(file) { try { const t = await file.text(); cons
 // ================= ЭКСПОРТ / ИМПОРТ ДАННЫХ =================
 function downloadBlob(c, f, m) { const b = new Blob([c], { type: m }); const u = URL.createObjectURL(b); const l = document.createElement('a'); l.href = u; l.download = f; l.click(); setTimeout(() => URL.revokeObjectURL(u), 1000); }
 async function exportJSON() { const d = { version: 1, exportedAt: Date.now(), accounts: state.accounts, categories: state.categories, operations: state.operations, debts: state.debts, templates: state.templates, archive: state.archive }; downloadBlob(JSON.stringify(d, null, 2), 'finance-backup-' + todayISO() + '.json', 'application/json'); alert('JSON сохранён'); }
-async function importJSON(file) { try { const t = await file.text(); const d = JSON.parse(t); if (!window.confirm('Импорт заменит ВСЕ данные. Продолжить?')) return; for (const s of STORES) { const a = await dbGetAll(s); for (const i of a) await dbDelete(s, i.id); } const load = async (s, i) => { if (Array.isArray(i)) for (const x of i) await dbPut(s, x); }; await load('accounts', d.accounts); await load('categories', d.categories); await load('operations', d.operations); await load('debts', d.debts); await load('templates', d.templates); await load('archive', d.archive); await loadAccounts(); await loadCategories(); await loadOperations(); await loadDebts(); await loadTemplates(); await loadArchive(); renderDashboard(); renderOperations(); renderArchive(); renderCategories(); renderAccounts(); renderTemplates(); alert('Импорт завершён'); } catch (e) { alert('Ошибка: ' + e.message); } }
+async function importJSON(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data || typeof data !== 'object') throw new Error('Неверный формат файла');
+    
+    if (!window.confirm('Объединить данные из файла с текущими?\n\nСуществующие записи будут обновлены, новые — добавлены. Данные, которые есть только на этом устройстве, НЕ удалятся.')) return;
+
+    const mergeStore = async (storeName, items) => {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        await dbPut(storeName, item); 
+      }
+    };
+
+    await mergeStore('accounts', data.accounts);
+    await mergeStore('categories', data.categories);
+    await mergeStore('operations', data.operations);
+    await mergeStore('debts', data.debts);
+    await mergeStore('templates', data.templates);
+    await mergeStore('archive', data.archive);
+
+    await loadAccounts(); await loadCategories(); await loadOperations(); await loadDebts(); await loadTemplates(); await loadArchive();
+
+    renderDashboard(); renderOperations(); renderArchive(); renderCategories(); renderAccounts(); renderTemplates();
+    alert('Слияние завершено успешно! Все данные объединены.');
+  } catch (err) { 
+    alert('Ошибка слияния: ' + err.message); 
+  }
+}
 function csvEscape(v) { const s = String(v == null ? '' : v); return s.includes(';') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; }
 async function exportCSV() { const r = [['Дата', 'Тип', 'Сумма', 'Счёт', 'Категория', 'Плановое', 'Не в балансе', 'Долг', 'Комментарий'].join(';')]; const s = [...state.operations].sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return ka - kb; }); s.forEach(o => { const a = state.accounts.find(x => x.id === o.accountId); const c = state.categories.find(x => x.id === o.categoryId); const d = state.debts.find(x => x.id === o.linkedDebtId); r.push([o.date || '', o.type === 'income' ? 'Доход' : 'Расход', Number(o.amount).toFixed(2), a ? a.name : '', c ? c.name : '', o.isPlanned ? 'да' : 'нет', o.excludeFromBalance ? 'да' : 'нет', d ? d.name : '', o.comment || ''].map(csvEscape).join(';')); }); downloadBlob('\uFEFF' + r.join('\r\n'), 'finance-' + todayISO() + '.csv', 'text/csv;charset=utf-8'); alert('CSV сохранён'); }
 async function importCSV(file) { try { const t = await file.text(); const l = t.replace(/^\uFEFF/, '').split(/\r?\n/).filter(x => x.trim()); if (l.length < 2) throw new Error('Пустой файл'); const h = l[0].split(';').map(x => x.replace(/^"|"$/g, '').trim().toLowerCase()); const ix = n => h.indexOf(n); const iD = ix('дата'), iT = ix('тип'), iA = ix('сумма'), iAc = ix('счёт'), iC = ix('категория'), iP = ix('плановое'), iE = ix('не в балансе'), iDbt = ix('долг'), iCm = ix('комментарий'); if (iT < 0 || iA < 0) throw new Error('Нет колонок'); if (!window.confirm('Импортировать CSV?')) return; const sl = line => { const r = []; let c = '', i = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { if (i && line[j + 1] === '"') { c += '"'; j++; } else i = !i; } else if (ch === ';' && !i) { r.push(c); c = ''; } else c += ch; } r.push(c); return r; }; let add = 0; for (let j = 1; j < l.length; j++) { const c = sl(l[j]); const tr = (c[iT] || '').toLowerCase(); const ty = tr.startsWith('дох') ? 'income' : 'expense'; const am = parseFloat((c[iA] || '0').replace(',', '.')) || 0; if (!am) continue; let ac = state.accounts.find(x => x.name === (c[iAc] || '').trim()); if (!ac && state.accounts.length) ac = state.accounts[0]; let ct = state.categories.find(x => x.name === (c[iC] || '').trim() && x.type === ty); if (!ct && c[iC]) { ct = { id: uid('cat'), type: ty, name: c[iC].trim(), createdAt: Date.now() }; await dbPut('categories', ct); state.categories.push(ct); } const dbt = c[iDbt] ? state.debts.find(x => x.name === c[iDbt].trim()) : null; const op = { id: uid('op'), type: ty, amount: am, accountId: ac ? ac.id : '', categoryId: ct ? ct.id : '', date: (c[iD] || '').trim(), comment: (c[iCm] || '').trim(), isPlanned: iP >= 0 && /^(да|yes|1)$/i.test((c[iP] || '').trim()), excludeFromBalance: iE >= 0 && /^(да|yes|1)$/i.test((c[iE] || '').trim()), linkedDebtId: dbt ? dbt.id : '', nested: [], manualSum: false, createdAt: Date.now(), updatedAt: Date.now() }; await dbPut('operations', op); state.operations.push(op); add++; } renderDashboard(); renderOperations(); renderCategories(); alert('Импортировано: ' + add); } catch (e) { alert('Ошибка: ' + e.message); } }
@@ -429,7 +476,6 @@ function setupModals() {
   document.getElementById('template-form').onsubmit = saveTemplate;
   document.getElementById('btn-add-template-field').onclick = () => addTemplateFieldInput();
   document.getElementById('btn-cancel-template').onclick = () => tryCloseModal('modal-template');
-  document.getElementById('btn-cancel-template').onclick = () => tryCloseModal('modal-template');
 }
 function setupModalXButtons() { $$('.modal-x').forEach(b => b.onclick = () => tryCloseModal(b.closest('.modal').id)); }
 function setupOverlayClose() { $$('.modal').forEach(m => m.onclick = (e) => { if (e.target === m) tryCloseModal(m.id); }); }
@@ -441,8 +487,7 @@ function setupSettingsButtons() {
   document.getElementById('btn-add-expense-category').onclick = () => addCategory('expense');
   document.getElementById('btn-add-template').onclick = () => openTemplateForm();
   document.getElementById('btn-export-json').onclick = exportJSON; document.getElementById('btn-import-json').onclick = () => document.getElementById('import-json-input').click();
-  document.getElementById('import-json-input').onchange = (e) => { const f = e.target.files[0]; if (f) 
-(f); e.target.value = ''; };
+  document.getElementById('import-json-input').onchange = (e) => { const f = e.target.files[0]; if (f) importJSON(f); e.target.value = ''; };
   document.getElementById('btn-export-csv').onclick = exportCSV; document.getElementById('btn-import-csv').onclick = () => document.getElementById('import-csv-input').click();
   document.getElementById('import-csv-input').onchange = (e) => { const f = e.target.files[0]; if (f) importCSV(f); e.target.value = ''; };
   document.getElementById('btn-export-txt').onclick = exportTXT; document.getElementById('btn-export-pdf').onclick = exportPDF;

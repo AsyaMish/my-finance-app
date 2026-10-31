@@ -72,6 +72,7 @@
         <h2>История</h2>
         <button id="btn-toggle-filters" class="btn-small">Фильтры ▾</button>
       </div>
+      
       <div id="filters-panel" class="filters-panel hidden">
         <input type="text" id="filter-search" placeholder="Поиск...">
         <div class="filters-row">
@@ -101,8 +102,17 @@
             <label>По <input type="date" id="filter-date-to"></label>
           </div>
         </div>
+        <div class="filters-row">
+          <label class="checkbox-label"><input type="checkbox" id="filter-has-debt"> С долгом</label>
+          <label class="checkbox-label"><input type="checkbox" id="filter-has-nested"> С детализацией</label>
+        </div>
+        <div class="filters-row">
+          <input type="number" id="filter-sum-from" placeholder="Сумма от">
+          <input type="number" id="filter-sum-to" placeholder="Сумма до">
+        </div>
         <button id="btn-reset-filters" class="btn-secondary">Сбросить</button>
       </div>
+
       <div class="mass-actions hidden" id="mass-actions">
         <span>Выбрано: <span id="selected-count">0</span></span>
         <button id="btn-mass-archive" class="btn-small">В архив</button>
@@ -214,7 +224,7 @@
     <button data-screen="archive" title="Архив">📦<span>Архив</span></button>
   </nav>
 
-  <!-- ===== МОДАЛЬНЫЕ ОКНА (без изменений) ===== -->
+  <!-- ===== МОДАЛЬНЫЕ ОКНА ===== -->
   <div id="modal-add-choice" class="modal hidden">
     <div class="modal-content"><button class="modal-x">×</button><h3>Что добавить?</h3>
       <div class="add-choice-buttons">
@@ -274,7 +284,6 @@
     </div>
   </div>
 
-  <!-- Окно шаблона (добавлено ранее) -->
   <div id="modal-template" class="modal hidden">
     <div class="modal-content"><button class="modal-x">×</button><h2 id="template-form-title">Шаблон</h2>
       <form id="template-form" onsubmit="return false;">
