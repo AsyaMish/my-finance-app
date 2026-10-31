@@ -124,9 +124,9 @@ function renderTemplates() {
   const l = document.getElementById('templates-list'); if (!l) return; l.innerHTML = ''; const t = document.getElementById('template-item-template');
   state.templates.sort((a,b) => (a.createdAt||0) - (b.createdAt||0)).forEach(tpl => {
     const n = t.content.firstElementChild.cloneNode(true); n.querySelector('.item-name').textContent = tpl.name; n.querySelector('.item-fields-count').textContent = `(${tpl.fields.length} полей)`;
-    const btnEdit = n.querySelector('.item-edit'); if (btnEdit) btnEdit.onclick = () => openTemplateForm(tpl);
-    const btnDel = n.querySelector('.item-delete'); if (btnDel) btnDel.onclick = () => deleteTemplate(tpl.id);
-    l.appendChild(n);
+    const btnEdit = n.querySelector('.item-edit');
+    if (btnEdit) btnEdit.onclick = () => openTemplateForm(tpl); 
+    n.querySelector('.item-delete').onclick = () => deleteTemplate(tpl.id); l.appendChild(n);
   });
 }
 function openTemplateForm(t = null) {
@@ -178,7 +178,6 @@ function updateDashboardPeriodStats() {
   const s = getPeriodStats(f, t); document.getElementById('dash-income').textContent = formatMoney(s.income); document.getElementById('dash-expense').textContent = formatMoney(s.expense);
 }
 
-// ================= ОПЕРАЦИИ =================
 function isManualSum() { return !document.getElementById('manual-sum-indicator').classList.contains('hidden'); }
 function showManualIndicator(s) { document.getElementById('manual-sum-indicator').classList.toggle('hidden', !s); }
 function disableNestedInputs(d) { $$('#nested-fields-list input').forEach(i => i.disabled = d); $$('#nested-fields-list button').forEach(b => b.disabled = d); }
@@ -243,41 +242,30 @@ async function saveOperationWithDebtCheck(e) {
 async function deleteOperation(id) { const op = state.operations.find(o => o.id === id); if (!op) return; let msg = 'Удалить операцию?'; if (op.linkedDebtId) { const d = state.debts.find(x => x.id === op.linkedDebtId); msg = `Связана с долгом «${d ? d.name : '—'}». Удалить?`; } if (!window.confirm(msg)) return; await dbDelete('operations', id); state.operations = state.operations.filter(o => o.id !== id); renderDashboard(); renderOperations(); fillDebtSelect(); }
 function copyOperation(id) { const op = state.operations.find(o => o.id === id); if (!op) return; fillOperationSelects(); fillOperationForm({ ...op, id: '' }); document.getElementById('operation-form-title').textContent = 'Копия'; document.getElementById('op-date').value = todayISO(); openModal('modal-operation'); }
 
-// ================= ИСТОРИЯ =================
 function fillFilterSelects() {
   const aS = document.getElementById('filter-account'); if (aS) { aS.innerHTML = '<option value="">Все счета</option>'; state.accounts.forEach(a => { const o = document.createElement('option'); o.value = a.id; o.textContent = a.name; aS.appendChild(o); }); }
   const cS = document.getElementById('filter-category'); if (cS) { cS.innerHTML = '<option value="">Все категории</option>'; state.categories.forEach(c => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; cS.appendChild(o); }); }
 }
 function getFilteredOperations() {
   let ops = [...state.operations];
+  // ДОБАВЛЯЕМ ДОЛГИ В ИСТОРИЮ (как псевдо-операции для отображения)
   const fakeDebts = state.debts.filter(d => d.isPlanned).map(d => ({
     id: d.id, isDebt: true, type: d.direction === 'i-owe' ? 'expense' : 'income', amount: d.initialAmount || 0, date: d.dueDate || '', comment: d.comment || '', isPlanned: true, excludeFromBalance: true, accountId: '', categoryId: '', linkedDebtId: d.id
   }));
   ops = [...ops, ...fakeDebts];
 
-  const search = (document.getElementById('filter-search').value || '').toLowerCase().trim();
+  const search = (document.getElementById('filter-search')?.value || '').toLowerCase().trim();
   if (search) ops = ops.filter(o => (o.comment||'').toLowerCase().includes(search) || (state.categories.find(c=>c.id===o.categoryId)?.name||'').toLowerCase().includes(search) || (state.debts.find(d=>d.id===o.linkedDebtId)?.name||'').toLowerCase().includes(search));
   const type = document.getElementById('filter-type').value; if (type === 'income' || type === 'expense') ops = ops.filter(o => o.type === type); if (type === 'debt') ops = ops.filter(o => !!o.linkedDebtId || o.isDebt);
   const acc = document.getElementById('filter-account').value; if (acc) ops = ops.filter(o => o.accountId === acc);
   const cat = document.getElementById('filter-category').value; if (cat) ops = ops.filter(o => o.categoryId === cat);
   const status = document.getElementById('filter-status').value; if (status === 'fact') ops = ops.filter(o => !o.isPlanned); if (status === 'plan') ops = ops.filter(o => o.isPlanned);
-  
-  const period = document.getElementById('filter-period').value; 
-  if (period !== 'all') { 
-    let f, t; 
-    if (period === 'current-month') { f = startOfMonthISO(); t = endOfMonthISO(); } 
-    else if (period === 'previous-month') { f = startOfPrevMonthISO(); t = endOfPrevMonthISO(); } 
-    else if (period === 'custom') { f = document.getElementById('filter-date-from').value; t = document.getElementById('filter-date-to').value; } 
-    if (f) ops = ops.filter(o => o.date && o.date >= f); 
-    if (t) ops = ops.filter(o => o.date && o.date <= t); 
-  }
+  const period = document.getElementById('filter-period').value; if (period !== 'all') { let f, t; if (period === 'current-month') { f = startOfMonthISO(); t = endOfMonthISO(); } else if (period === 'previous-month') { f = startOfPrevMonthISO(); t = endOfPrevMonthISO(); } else if (period === 'custom') { f = document.getElementById('filter-date-from').value; t = document.getElementById('filter-date-to').value; } if (f) ops = ops.filter(o => o.date && o.date >= f); if (t) ops = ops.filter(o => o.date && o.date <= t); }
   
   const fHasDebt = document.getElementById('filter-has-debt');
   if (fHasDebt && fHasDebt.checked) ops = ops.filter(o => !!o.linkedDebtId || o.isDebt);
-  
   const fHasNested = document.getElementById('filter-has-nested');
   if (fHasNested && fHasNested.checked) ops = ops.filter(o => o.nested && o.nested.length > 0);
-
   const sumFrom = document.getElementById('filter-sum-from')?.value || '';
   const sumTo = document.getElementById('filter-sum-to')?.value || '';
   if (sumFrom !== '') ops = ops.filter(o => o.amount >= parseNumber(sumFrom));
@@ -314,7 +302,6 @@ function renderOperations() {
 function updateMassActionsVisibility() { document.getElementById('mass-actions').classList.toggle('hidden', state.selectedOperations.size === 0); document.getElementById('selected-count').textContent = state.selectedOperations.size; }
 async function deleteSelectedOperations() { const ids = Array.from(state.selectedOperations); if (!ids.length) return; if (!window.confirm('Удалить выбранные?')) return; for (const id of ids) await dbDelete('operations', id); state.operations = state.operations.filter(o => !state.selectedOperations.has(o.id)); state.selectedOperations.clear(); renderDashboard(); renderOperations(); fillDebtSelect(); }
 
-// ================= ОТЧЁТЫ =================
 function getReportPeriod() { const s = document.getElementById('report-period-select'); const m = s ? s.value : 'current-month'; if (m === 'all') return { from: null, to: null }; if (m === 'custom') return { from: document.getElementById('report-date-from').value || null, to: document.getElementById('report-date-to').value || null }; return { from: startOfMonthISO(), to: endOfMonthISO() }; }
 function operationInPeriod(o, f, t) { if (!o.date) return false; if (f && o.date < f) return false; if (t && o.date > t) return false; return true; }
 function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]); }
@@ -377,7 +364,6 @@ function renderReports() {
   if (tab === 'fact') b.innerHTML = renderReportFact(p.from, p.to); else if (tab === 'plan') b.innerHTML = renderReportPlan(p.from, p.to); else b.innerHTML = renderReportDebts();
 }
 
-// ================= АРХИВ =================
 async function loadArchive() { state.archive = await dbGetAll('archive'); }
 function isOlderThanOneYear(dateISO) { if (!dateISO) return false; const d = new Date(dateISO); const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1); return d < cutoff; }
 function isCreatedOlderThanOneYear(createdAt) { return createdAt && createdAt < Date.now() - 365 * 24 * 60 * 60 * 1000; }
@@ -421,7 +407,6 @@ async function restoreFromArchive(id) { const i = state.archive.find(a => a.id =
 async function exportArchiveJSON() { const y = [...new Set(state.archive.map(a => a.archiveYear))].sort((a, b) => b - a); if (!y.length) return alert('Пусто'); const i = prompt(`За какой год? (${y.join(', ')})`, ''); if (i === null) return; let it, f; if (i.trim() === '') { it = state.archive; f = 'archive-all.json'; } else { const yr = parseInt(i); if (isNaN(yr)) return; it = state.archive.filter(a => a.archiveYear === yr); if (!it.length) return alert('Нет данных'); f = 'archive-' + yr + '.json'; } const d = { version: 1, exportedAt: Date.now(), items: it }; const b = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' }); const u = URL.createObjectURL(b); const l = document.createElement('a'); l.href = u; l.download = f; l.click(); URL.revokeObjectURL(u); if (window.confirm('Экспорт выполнен. Удалить из архива?')) { for (const itm of it) await dbDelete('archive', itm.id); state.archive = state.archive.filter(a => !it.find(x => x.id === a.id)); renderArchive(); } }
 async function importArchiveJSON(file) { try { const t = await file.text(); const d = JSON.parse(t); const it = Array.isArray(d) ? d : (d.items || []); if (!it.length) return alert('Нет записей'); if (!window.confirm(`Импортировать ${it.length} записей?`)) return; for (const i of it) { const itm = { id: i.id || uid('arch'), type: i.type || 'expense', amount: Number(i.amount) || 0, accountId: i.accountId || '', accountName: i.accountName || '—', categoryId: i.categoryId || '', categoryName: i.categoryName || 'Без кат.', date: i.date || '', comment: i.comment || '', isPlanned: !!i.isPlanned, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], archiveYear: i.archiveYear || new Date().getFullYear(), archivedAt: i.archivedAt || Date.now(), fromAuto: false }; await dbPut('archive', itm); } state.archive = await dbGetAll('archive'); renderArchive(); alert('Импорт завершён'); } catch (e) { alert('Ошибка: ' + e.message); } }
 
-// ================= ЭКСПОРТ / ИМПОРТ ДАННЫХ =================
 function downloadBlob(c, f, m) { const b = new Blob([c], { type: m }); const u = URL.createObjectURL(b); const l = document.createElement('a'); l.href = u; l.download = f; l.click(); setTimeout(() => URL.revokeObjectURL(u), 1000); }
 async function exportJSON() { const d = { version: 1, exportedAt: Date.now(), accounts: state.accounts, categories: state.categories, operations: state.operations, debts: state.debts, templates: state.templates, archive: state.archive }; downloadBlob(JSON.stringify(d, null, 2), 'finance-backup-' + todayISO() + '.json', 'application/json'); alert('JSON сохранён'); }
 async function importJSON(file) {
@@ -463,7 +448,6 @@ async function updateStorageInfo() { const i = document.getElementById('storage-
 function formatBytes(b) { if (!b) return '0 Б'; const u = ['Б', 'КБ', 'МБ', 'ГБ']; let i = 0, n = b; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return n.toFixed(2) + ' ' + u[i]; }
 async function requestPersistentStorage() { if (!navigator.storage || !navigator.storage.persist) return alert('Не поддерживается'); const g = await navigator.storage.persist(); alert(g ? 'Разрешено' : 'Запрещено'); updateStorageInfo(); }
 
-// ================= ОБРАБОТЧИКИ =================
 function setupNavigation() { $$('[data-screen]').forEach(b => b.onclick = () => switchScreen(b.dataset.screen)); }
 function setupModals() {
   document.getElementById('fab-add-center').onclick = () => openModal('modal-add-choice');

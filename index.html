@@ -74,7 +74,7 @@
       </div>
       
       <div id="filters-panel" class="filters-panel hidden">
-        <input type="text" id="filter-search" placeholder="Поиск...">
+        <input type="text" id="filter-search" placeholder="Поиск по комментарию...">
         <div class="filters-row">
           <select id="filter-type">
             <option value="">Все типы</option>
@@ -119,6 +119,7 @@
         <button id="btn-mass-delete" class="btn-danger btn-small">Удалить</button>
         <button id="btn-mass-cancel" class="btn-secondary btn-small">Отмена</button>
       </div>
+
       <div class="operations-list" id="operations-list"></div>
       <div class="empty-state hidden" id="operations-empty">Пока нет записей.</div>
     </section>
@@ -195,10 +196,10 @@
       <div class="settings-section">
         <h3>Экспорт и импорт данных</h3>
         <div class="export-import-grid">
-          <button id="btn-export-json" class="btn-small">JSON</button>
-          <button id="btn-export-csv" class="btn-small">CSV</button>
-          <button id="btn-export-txt" class="btn-small">TXT</button>
-          <button id="btn-export-pdf" class="btn-small">PDF</button>
+          <button id="btn-export-json" class="btn-small">Экспорт JSON</button>
+          <button id="btn-export-csv" class="btn-small">Экспорт CSV</button>
+          <button id="btn-export-txt" class="btn-small">Экспорт TXT</button>
+          <button id="btn-export-pdf" class="btn-small">Экспорт PDF</button>
           <button id="btn-import-json" class="btn-small">Импорт JSON</button>
           <button id="btn-import-csv" class="btn-small">Импорт CSV</button>
           <input type="file" id="import-json-input" accept=".json" class="hidden">
@@ -305,6 +306,7 @@
     </div>
   </div>
 
+  <!-- ===== ШАБЛОНЫ ===== -->
   <template id="operation-item-template">
     <div class="operation-item">
       <input type="checkbox" class="op-select">

@@ -40,39 +40,44 @@ h3 { font-size: 17px; font-weight: 600; margin: 0 0 12px 0; }
 .main-nav button:hover { background: var(--input-bg); color: var(--text); }
 .main-nav button.active { background: var(--accent); color: #fff; font-weight: 600; }
 
-/* ===== НИЖНЯЯ НАВИГАЦИЯ (иконки) ===== */
+/* НИЖНЯЯ НАВИГАЦИЯ (иконки) */
 .bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0;
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; justify-content: space-around; align-items: center;
   background: var(--card-bg); border-top: 1px solid var(--border);
-  padding: 0 10px env(safe-area-inset-bottom);
-  z-index: 50; height: 65px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  z-index: 50; height: 70px;
 }
 .bottom-nav button {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   background: none; border: none; color: var(--text-secondary); font-size: 20px;
-  cursor: pointer; transition: all 0.2s; position: relative; padding: 8px 0;
+  cursor: pointer; transition: all 0.2s; position: relative;
 }
 .bottom-nav button span { font-size: 10px; font-weight: 500; }
 .bottom-nav button.active { color: var(--accent); }
 
-/* Кнопка + (Плавающая по центру) */
-.nav-center-btn {
-  flex: 0 0 64px !important;
-  height: 64px; width: 64px;
-  border-radius: 22px !important;
-  background: var(--accent) !important;
-  color: #fff !important;
-  font-size: 36px !important; font-weight: 300 !important; line-height: 1;
-  margin-top: -35px; /* Поднимаем над меню */
-  box-shadow: 0 6px 16px rgba(30, 86, 62, 0.4);
-  display: flex !important; align-items: center; justify-content: center;
-  border: 4px solid var(--card-bg) !important; /* Белая обводка */
-  cursor: pointer; z-index: 60;
+/* ===== ЦЕНТРАЛЬНАЯ КНОПКА + (Сделана заметной) ===== */
+.bottom-nav .nav-center-btn {
+  flex: 0 0 64px !important; 
+  width: 64px !important; 
+  height: 64px !important; 
+  border-radius: 20px !important; 
+  background: var(--accent) !important; 
+  color: #ffffff !important; 
+  font-size: 36px !important; 
+  font-weight: 300 !important;
+  margin-top: -32px !important; 
+  box-shadow: 0 6px 16px rgba(30, 86, 62, 0.4) !important; 
+  display: flex !important; 
+  align-items: center !important; 
+  justify-content: center !important;
+  position: relative !important;
+  z-index: 100 !important;
+  border: none !important;
 }
-.nav-center-btn:active { transform: scale(0.92) translateY(-35px); }
+.bottom-nav .nav-center-btn:active { transform: scale(0.92); }
 
-/* Карточки и кнопки */
+/* Карточки */
 .card { background: var(--card-bg); border-radius: 20px; padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
 .card .total { font-weight: 700; font-size: 17px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .dashboard-grid { display: grid; gap: 16px; }
