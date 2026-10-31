@@ -45,7 +45,13 @@ function formatMoney(n) {
 }
 function parseNumber(v) { return parseFloat(String(v).replace(',', '.')) || 0; }
 function todayISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-function startOfWeekISO() { const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - 6); return toISO(d); }
+function startOfWeekISO() {
+  const d = new Date(); d.setHours(0,0,0,0);
+  const day = d.getDay(); // 0=вс, 1=пн...
+  const diff = (day === 0 ? 6 : day - 1);
+  d.setDate(d.getDate() - diff);
+  return toISO(d);
+}
 function startOfMonthISO() { const d = new Date(); return toISO(new Date(d.getFullYear(), d.getMonth(), 1)); }
 function endOfMonthISO() { const d = new Date(); return toISO(new Date(d.getFullYear(), d.getMonth() + 1, 0)); }
 function startOfPrevMonthISO() { const d = new Date(); return toISO(new Date(d.getFullYear(), d.getMonth() - 1, 1)); }
@@ -148,6 +154,91 @@ async function saveTemplate(e) {
   clearFormDirty(document.getElementById('template-form')); closeModal('modal-template'); renderTemplates(); fillTemplateSelect();
 }
 async function deleteTemplate(id) { if (!window.confirm('Удалить шаблон?')) return; await dbDelete('templates', id); state.templates = state.templates.filter(x => x.id !== id); renderTemplates(); fillTemplateSelect(); }
+function openDebtForm(d = null) {
+  document.getElementById('debt-id').value = d ? d.id : '';
+  document.getElementById('debt-form-title').textContent = d ? 'Редактировать долг' : 'Новый долг';
+  document.getElementById('debt-direction').value = d ? d.direction : 'i-owe';
+  document.getElementById('debt-name').value = d ? d.name : '';
+  document.getElementById('debt-amount').value = d && d.initialAmount != null ? d.initialAmount : '';
+  document.getElementById('debt-is-planned').checked = d ? !!d.isPlanned : false;
+  document.getElementById('debt-is-credit').checked = d ? !!d.isCredit : false;
+  document.getElementById('credit-block').classList.toggle('hidden', !(d && d.isCredit));
+  document.getElementById('debt-term').value = d && d.term != null ? d.term : '';
+  document.getElementById('debt-rate').value = d && d.rate != null ? d.rate : '';
+  document.getElementById('debt-total').value = d && d.total != null ? d.total : '';
+  document.getElementById('debt-due-date').value = d && d.dueDate ? d.dueDate : '';
+  document.getElementById('debt-comment').value = d && d.comment ? d.comment : '';
+  clearFormDirty(document.getElementById('debt-form'));
+  openModal('modal-debt');
+}
+
+function calcCreditTotal() {
+  const amount = parseNumber(document.getElementById('debt-amount').value);
+  const term = parseNumber(document.getElementById('debt-term').value);
+  const rate = parseNumber(document.getElementById('debt-rate').value);
+  const totalEl = document.getElementById('debt-total');
+  if (!amount || !term) { totalEl.value = ''; return; }
+  const monthlyRate = rate / 100 / 12;
+  let total;
+  if (monthlyRate > 0) {
+    const pay = amount * monthlyRate / (1 - Math.pow(1 + monthlyRate, -term));
+    total = pay * term;
+  } else {
+    total = amount;
+  }
+  totalEl.value = total.toFixed(2);
+}
+
+async function saveDebt(e) {
+  e.preventDefault();
+  const id = document.getElementById('debt-id').value || uid('debt');
+  const existing = state.debts.find(d => d.id === id);
+  const direction = document.getElementById('debt-direction').value;
+  const name = document.getElementById('debt-name').value.trim();
+  const initialAmount = parseNumber(document.getElementById('debt-amount').value);
+  const isPlanned = document.getElementById('debt-is-planned').checked;
+  const isCredit = document.getElementById('debt-is-credit').checked;
+  const term = isCredit ? parseNumber(document.getElementById('debt-term').value) : null;
+  const rate = isCredit ? parseNumber(document.getElementById('debt-rate').value) : null;
+  const total = isCredit ? parseNumber(document.getElementById('debt-total').value) : null;
+  const dueDate = document.getElementById('debt-due-date').value || '';
+  const comment = document.getElementById('debt-comment').value.trim();
+
+  if (!name) return alert('Введите название долга.');
+  if (!initialAmount) return alert('Введите сумму.');
+
+  const debt = {
+    id, direction, name, initialAmount, isPlanned, isCredit,
+    term, rate, total, dueDate, comment,
+    createdAt: existing ? existing.createdAt : Date.now(),
+    updatedAt: Date.now(),
+  };
+  await dbPut('debts', debt);
+  if (existing) state.debts[state.debts.findIndex(d => d.id === id)] = debt;
+  else state.debts.push(debt);
+
+  clearFormDirty(document.getElementById('debt-form'));
+  closeModal('modal-debt');
+  renderDashboard();
+  renderOperations();
+  fillDebtSelect();
+}
+
+async function deleteDebt(id) {
+  const d = state.debts.find(x => x.id === id);
+  if (!d) return;
+  const ops = state.operations.filter(o => o.linkedDebtId === id);
+  let msg = `Удалить долг «${d.name}»?`;
+  if (ops.length) msg += `\nС ним связано операций: ${ops.length}. Они останутся, но потеряют привязку.`;
+  if (!window.confirm(msg)) return;
+  for (const o of ops) { o.linkedDebtId = ''; await dbPut('operations', o); }
+  await dbDelete('debts', id);
+  state.debts = state.debts.filter(x => x.id !== id);
+  renderDashboard();
+  renderOperations();
+  renderReports();
+  fillDebtSelect();
+}
 
 async function loadDebts() { state.debts = await dbGetAll('debts'); }
 function resetDebtForm() {
@@ -399,11 +490,11 @@ function renderOperations() {
     
     n.querySelector('.op-main').onclick = (ev) => {
       if (ev.target.tagName === 'INPUT') return;
-      if (op.isDebt) openDebtForm(debt);
+      if (op.isDebt) { if (debt) openDebtForm(debt); else renderOperations(); }
       else openOperationForm(op);
     };
     
-    n.querySelector('.op-edit').onclick = () => op.isDebt ? openDebtForm(debt) : openOperationForm(op);
+    n.querySelector('.op-edit').onclick = () => { if (op.isDebt) { if (debt) openDebtForm(debt); } else openOperationForm(op); };
     n.querySelector('.op-copy').onclick = () => { if (!op.isDebt) copyOperation(op.id); };
     n.querySelector('.op-delete').onclick = () => { if (op.isDebt) deleteDebt(op.id); else deleteOperation(op.id); };
     l.appendChild(n);
@@ -487,6 +578,8 @@ async function archiveOperations(ops, yearByOp) {
 }
 async function archiveSelectedOperations() {
   const ids = Array.from(state.selectedOperations); if (!ids.length) return; const ops = state.operations.filter(o => ids.includes(o.id));
+  const debtOps = ops.filter(o => o.linkedDebtId);
+if (debtOps.length && !window.confirm(`Среди выбранных ${debtOps.length} операций привязаны к долгам. После архивации остатки долгов увеличатся. Продолжить?`)) return;
   const wD = ops.filter(o => !o.date); let msg = `Архивировать ${ops.length} операций?`; if (wD.length) msg += `\nУ ${wD.length} записей нет даты.`; if (!window.confirm(msg)) return;
   let yB = {}; if (wD.length) { const yS = window.prompt(`В какой год архива? (по умолч. ${new Date().getFullYear()})`, String(new Date().getFullYear())); if (yS === null) return; const y = parseInt(yS); if (isNaN(y)) return; wD.forEach(o => yB[o.id] = y); }
   await archiveOperations(ops, yB);
@@ -633,3 +726,7 @@ async function init() {
 document.addEventListener('submit', (e) => { e.preventDefault(); }, true);
 if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js')); }
 document.addEventListener('DOMContentLoaded', init);
+// Экспорт для inline-обработчиков в отчётах
+window.state = state;
+window.openOperationForm = openOperationForm;
+window.openDebtForm = openDebtForm;
