@@ -150,6 +150,116 @@ async function saveTemplate(e) {
 async function deleteTemplate(id) { if (!window.confirm('Удалить шаблон?')) return; await dbDelete('templates', id); state.templates = state.templates.filter(x => x.id !== id); renderTemplates(); fillTemplateSelect(); }
 
 async function loadDebts() { state.debts = await dbGetAll('debts'); }
+function resetDebtForm() {
+  const id = document.getElementById('debt-id'); if (id) id.value = '';
+  const t = document.getElementById('debt-form-title'); if (t) t.textContent = 'Новый долг';
+  const dir = document.getElementById('debt-direction'); if (dir) dir.value = 'i-owe';
+  const n = document.getElementById('debt-name'); if (n) n.value = '';
+  const a = document.getElementById('debt-amount'); if (a) a.value = '';
+  const p = document.getElementById('debt-is-planned'); if (p) p.checked = false;
+  const c = document.getElementById('debt-is-credit'); if (c) { c.checked = false; }
+  const cb = document.getElementById('credit-block'); if (cb) cb.classList.add('hidden');
+  const term = document.getElementById('debt-term'); if (term) term.value = '';
+  const rate = document.getElementById('debt-rate'); if (rate) rate.value = '';
+  const tot = document.getElementById('debt-total'); if (tot) tot.value = '';
+  const dd = document.getElementById('debt-due-date'); if (dd) dd.value = '';
+  const cm = document.getElementById('debt-comment'); if (cm) cm.value = '';
+}
+
+function fillDebtForm(debt) {
+  document.getElementById('debt-id').value = debt.id;
+  document.getElementById('debt-form-title').textContent = 'Редактировать долг';
+  document.getElementById('debt-direction').value = debt.direction || 'i-owe';
+  document.getElementById('debt-name').value = debt.name || '';
+  document.getElementById('debt-amount').value = debt.initialAmount ? debt.initialAmount.toFixed(2) : '';
+  document.getElementById('debt-is-planned').checked = !!debt.isPlanned;
+  document.getElementById('debt-is-credit').checked = !!debt.isCredit;
+  const cb = document.getElementById('credit-block');
+  if (cb) cb.classList.toggle('hidden', !debt.isCredit);
+  document.getElementById('debt-term').value = debt.term || '';
+  document.getElementById('debt-rate').value = debt.rate || '';
+  document.getElementById('debt-total').value = debt.totalAmount ? debt.totalAmount.toFixed(2) : '';
+  document.getElementById('debt-due-date').value = debt.dueDate || '';
+  document.getElementById('debt-comment').value = debt.comment || '';
+}
+
+function openDebtForm(debt = null) {
+  if (debt) fillDebtForm(debt);
+  else resetDebtForm();
+  openModal('modal-debt');
+}
+
+function calcCreditTotal() {
+  const amount = parseNumber(document.getElementById('debt-amount').value);
+  const term = parseNumber(document.getElementById('debt-term').value);
+  const rate = parseNumber(document.getElementById('debt-rate').value);
+  // Упрощённый расчёт: сумма + проценты за весь срок
+  const total = amount + (amount * (rate / 100) * (term / 12));
+  const el = document.getElementById('debt-total');
+  if (el) el.value = total ? total.toFixed(2) : '';
+}
+
+async function saveDebt(e) {
+  e.preventDefault();
+  const id = document.getElementById('debt-id').value || uid('debt');
+  const existing = state.debts.find(d => d.id === id);
+  
+  const direction = document.getElementById('debt-direction').value;
+  const name = document.getElementById('debt-name').value.trim();
+  const initialAmount = parseNumber(document.getElementById('debt-amount').value);
+  const isPlanned = document.getElementById('debt-is-planned').checked;
+  const isCredit = document.getElementById('debt-is-credit').checked;
+  const term = isCredit ? parseNumber(document.getElementById('debt-term').value) : 0;
+  const rate = isCredit ? parseNumber(document.getElementById('debt-rate').value) : 0;
+  const totalAmount = isCredit ? parseNumber(document.getElementById('debt-total').value) : initialAmount;
+  const dueDate = document.getElementById('debt-due-date').value;
+  const comment = document.getElementById('debt-comment').value.trim();
+  
+  if (!name) return alert('Введите название долга.');
+  
+  const debt = {
+    id, direction, name, initialAmount, isPlanned, isCredit,
+    term, rate, totalAmount, dueDate, comment,
+    createdAt: existing ? existing.createdAt : Date.now(),
+    updatedAt: Date.now()
+  };
+  
+  await dbPut('debts', debt);
+  if (existing) state.debts[state.debts.findIndex(d => d.id === id)] = debt;
+  else state.debts.push(debt);
+  
+  clearFormDirty(document.getElementById('debt-form'));
+  closeModal('modal-debt');
+  renderDashboard();
+  renderOperations();
+  fillDebtSelect();
+  renderReports();
+}
+
+async function deleteDebt(id) {
+  const debt = state.debts.find(d => d.id === id);
+  if (!debt) return;
+  
+  const linkedOps = state.operations.filter(o => o.linkedDebtId === id);
+  let msg = `Удалить долг «${debt.name}»?`;
+  if (linkedOps.length) {
+    msg += `\nС ним связано ${linkedOps.length} операций. Связь с долгом будет удалена.`;
+  }
+  if (!window.confirm(msg)) return;
+  
+  // Отвязываем операции от удаляемого долга
+  for (const op of linkedOps) {
+    op.linkedDebtId = '';
+    await dbPut('operations', op);
+  }
+  
+  await dbDelete('debts', id);
+  state.debts = state.debts.filter(d => d.id !== id);
+  renderDashboard();
+  renderOperations();
+  fillDebtSelect();
+  renderReports();
+}
 function getDebtRemaining(d) { let p = 0; state.operations.forEach(o => { if (o.linkedDebtId === d.id && !o.isPlanned) p += o.amount; }); return Math.max(0, (d.initialAmount || 0) - p); }
 function getDebtsTotal(dir) { let t = 0; state.debts.forEach(d => { if (!d.isPlanned && d.direction === dir) t += getDebtRemaining(d); }); return t; }
 
