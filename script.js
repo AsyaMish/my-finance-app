@@ -530,34 +530,128 @@ async function importArchiveJSON(file) { try { const t = await file.text(); cons
 
 function downloadBlob(c, f, m) { const b = new Blob([c], { type: m }); const u = URL.createObjectURL(b); const l = document.createElement('a'); l.href = u; l.download = f; l.click(); setTimeout(() => URL.revokeObjectURL(u), 1000); }
 async function exportJSON() { const d = { version: 1, exportedAt: Date.now(), accounts: state.accounts, categories: state.categories, operations: state.operations, debts: state.debts, templates: state.templates, archive: state.archive }; downloadBlob(JSON.stringify(d, null, 2), 'finance-backup-' + todayISO() + '.json', 'application/json'); alert('JSON сохранён'); }
+// ===== Импорт JSON: выбор режима («Заменить всё» / «Умное слияние») =====
+function recordTimestamp(item) {
+  if (!item || typeof item !== 'object') return 0;
+  const candidates = [item.updatedAt, item.createdAt, item.archivedAt];
+  for (const c of candidates) { const n = Number(c); if (Number.isFinite(n) && n > 0) return n; }
+  const d = item.date || item.dueDate;
+  if (typeof d === 'string' && d) { const t = new Date(d).getTime(); if (Number.isFinite(t)) return t; }
+  return 0;
+}
+function normalizeImportedData(data) {
+  // Поддержка двух форматов: полный экспорт (объект со коллекциями) и просто массив операций/архива
+  if (Array.isArray(data)) {
+    const first = data[0] || {};
+    if ('archiveYear' in first || 'archivedAt' in first) return { archive: data };
+    return { operations: data };
+  }
+  return data;
+}
+async function dbClearStore(storeName) {
+  return new Promise((res, rej) => {
+    const tx = state.db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).clear();
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function reloadAllStateAfterImport() {
+  await loadAccounts(); await loadCategories(); await loadOperations();
+  await loadDebts(); await loadTemplates(); await loadArchive();
+}
+function renderEverythingAfterImport() {
+  renderDashboard(); renderOperations(); renderArchive();
+  renderCategories(); renderAccounts(); renderTemplates();
+}
+async function applyReplaceImport(data) {
+  for (const s of STORES) await dbClearStore(s);
+  const putAll = async (storeName, items) => {
+    if (!Array.isArray(items)) return;
+    for (const item of items) if (item && item.id) await dbPut(storeName, item);
+  };
+  await putAll('accounts', data.accounts);
+  await putAll('categories', data.categories);
+  await putAll('operations', data.operations);
+  await putAll('debts', data.debts);
+  await putAll('templates', data.templates);
+  await putAll('archive', data.archive);
+  await reloadAllStateAfterImport();
+  renderEverythingAfterImport();
+  alert('Импорт завершён: все данные заменены на версию из файла.');
+}
+async function applySmartMergeImport(data) {
+  const stats = { added: 0, updated: 0, kept: 0 };
+  const mergeStore = async (storeName, items) => {
+    if (!Array.isArray(items) || !items.length) return;
+    const current = await dbGetAll(storeName);
+    const byId = new Map(current.map(x => [x.id, x]));
+    for (const item of items) {
+      if (!item || !item.id) continue;
+      const existing = byId.get(item.id);
+      if (!existing) { await dbPut(storeName, item); stats.added++; continue; }
+      // Совпадает id — оставляем самую свежую запись
+      const incomingTs = recordTimestamp(item);
+      const existingTs = recordTimestamp(existing);
+      if (incomingTs >= existingTs) { await dbPut(storeName, item); stats.updated++; }
+      else { stats.kept++; } // в текущей базе запись свежее — оставляем как есть
+    }
+  };
+  await mergeStore('accounts', data.accounts);
+  await mergeStore('categories', data.categories);
+  await mergeStore('operations', data.operations);
+  await mergeStore('debts', data.debts);
+  await mergeStore('templates', data.templates);
+  await mergeStore('archive', data.archive);
+  await reloadAllStateAfterImport();
+  renderEverythingAfterImport();
+  alert('Умное слияние завершено.\nНовых записей добавлено: ' + stats.added + '\nОбновлено (взята более свежая версия): ' + stats.updated + '\nОставлено без изменений (текущая версия оказалась свежее): ' + stats.kept);
+}
+let pendingImportData = null;
+function openImportChoiceModal(data) {
+  pendingImportData = data;
+  const counts = [
+    ['операций', data.operations], ['счетов', data.accounts], ['категорий', data.categories],
+    ['долгов', data.debts], ['шаблонов', data.templates], ['записей архива', data.archive]
+  ].filter(([, arr]) => Array.isArray(arr) && arr.length)
+   .map(([label, arr]) => arr.length + ' ' + label);
+  const summary = document.getElementById('import-choice-summary');
+  if (summary) summary.textContent = 'В файле: ' + (counts.length ? counts.join(', ') : 'нет распознаваемых данных') + '.';
+  openModal('modal-import-choice');
+}
+function setupImportChoiceModal() {
+  const close = () => closeModal('modal-import-choice');
+  const cancelBtn = document.getElementById('btn-import-cancel');
+  const xBtn = document.getElementById('btn-import-choice-close');
+  if (cancelBtn) cancelBtn.onclick = close;
+  if (xBtn) xBtn.onclick = close;
+  const replaceBtn = document.getElementById('btn-import-replace');
+  if (replaceBtn) replaceBtn.onclick = async () => {
+    if (!pendingImportData) return close();
+    if (!window.confirm('ВНИМАНИЕ: текущие данные (счета, операции, долги, шаблоны, архив) будут полностью удалены и заменены данными из файла.\n\nПродолжить?')) return;
+    close();
+    try { await applyReplaceImport(pendingImportData); } catch (e) { alert('Ошибка импорта: ' + e.message); }
+    pendingImportData = null;
+  };
+  const mergeBtn = document.getElementById('btn-import-merge');
+  if (mergeBtn) mergeBtn.onclick = async () => {
+    if (!pendingImportData) return close();
+    close();
+    try { await applySmartMergeImport(pendingImportData); } catch (e) { alert('Ошибка слияния: ' + e.message); }
+    pendingImportData = null;
+  };
+}
 async function importJSON(file) {
   try {
     const text = await file.text();
-    const data = JSON.parse(text);
+    const rawData = JSON.parse(text);
+    const data = normalizeImportedData(rawData);
     if (!data || typeof data !== 'object') throw new Error('Неверный формат файла');
-    
-    if (!window.confirm('Объединить данные из файла с текущими?\n\nСуществующие записи будут обновлены, новые — добавлены. Данные, которые есть только на этом устройстве, НЕ удалятся.')) return;
-
-    const mergeStore = async (storeName, items) => {
-      if (!Array.isArray(items)) return;
-      for (const item of items) {
-        await dbPut(storeName, item); 
-      }
-    };
-
-    await mergeStore('accounts', data.accounts);
-    await mergeStore('categories', data.categories);
-    await mergeStore('operations', data.operations);
-    await mergeStore('debts', data.debts);
-    await mergeStore('templates', data.templates);
-    await mergeStore('archive', data.archive);
-
-    await loadAccounts(); await loadCategories(); await loadOperations(); await loadDebts(); await loadTemplates(); await loadArchive();
-
-    renderDashboard(); renderOperations(); renderArchive(); renderCategories(); renderAccounts(); renderTemplates();
-    alert('Слияние завершено успешно! Все данные объединены.');
-  } catch (err) { 
-    alert('Ошибка слияния: ' + err.message); 
+    const hasAny = STORES.some(s => Array.isArray(data[s]) && data[s].length);
+    if (!hasAny) throw new Error('В файле нет данных для импорта');
+    openImportChoiceModal(data);
+  } catch (err) {
+    alert('Ошибка чтения файла: ' + err.message);
   }
 }
 function csvEscape(v) { const s = String(v == null ? '' : v); return s.includes(';') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; }
@@ -636,7 +730,7 @@ function setupArchive() {
 async function init() {
   loadTheme(); state.db = await openDB();
   await loadAccounts(); await loadCategories(); await loadTemplates(); await loadOperations(); await loadDebts(); await loadArchive();
-  setupNavigation(); setupModals(); setupModalXButtons(); setupOverlayClose(); setupFormDirtyTracking(); setupTheme(); setupSettingsButtons(); setupDebtForm(); setupOperationForm(); setupDashboardPeriod(); setupHistoryFilters(); setupReports(); setupArchive();
+  setupNavigation(); setupModals(); setupModalXButtons(); setupOverlayClose(); setupFormDirtyTracking(); setupTheme(); setupSettingsButtons(); setupDebtForm(); setupOperationForm(); setupDashboardPeriod(); setupHistoryFilters(); setupReports(); setupArchive(); setupImportChoiceModal();
   switchScreen('dashboard');
   await autoArchiveOldOperations(); showArchiveNotificationIfNeeded();
 }

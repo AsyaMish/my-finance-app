@@ -307,6 +307,26 @@
     </div>
   </div>
 
+  <!-- ===== МОДАЛКА: РЕЖИМ ИМПОРТА JSON ===== -->
+  <div id="modal-import-choice" class="modal hidden">
+    <div class="modal-content">
+      <button class="modal-x" id="btn-import-choice-close">×</button>
+      <h2>Импорт из JSON</h2>
+      <p id="import-choice-summary" class="hint" style="margin-top:8px;"></p>
+      <div class="import-choice-options">
+        <button type="button" id="btn-import-replace" class="import-choice-card">
+          <span class="import-choice-title">1. Заменить все данные</span>
+          <span class="import-choice-desc">Текущая база будет полностью удалена и заменена данными из файла.</span>
+        </button>
+        <button type="button" id="btn-import-merge" class="import-choice-card">
+          <span class="import-choice-title">2. Обновить данные (умное слияние)</span>
+          <span class="import-choice-desc">Новые записи добавятся. При совпадении записей останется самая свежая. То, что есть только в текущей базе, не удалится.</span>
+        </button>
+      </div>
+      <div class="form-buttons"><button type="button" id="btn-import-cancel" class="btn-secondary">Отмена</button></div>
+    </div>
+  </div>
+
   <!-- ===== ШАБЛОНЫ ===== -->
   <template id="operation-item-template">
     <div class="operation-item">
