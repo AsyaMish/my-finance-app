@@ -205,3 +205,6 @@ form input:focus, form select:focus { background: var(--card-bg); border-color: 
 @media (min-width: 769px) and (max-width: 1024px) {
   .dashboard-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* Состояние кнопок выбора режима импорта */
+.import-choice-card:disabled { opacity: 0.5; pointer-events: none; }

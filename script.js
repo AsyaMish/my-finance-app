@@ -564,6 +564,35 @@ function renderEverythingAfterImport() {
   renderDashboard(); renderOperations(); renderArchive();
   renderCategories(); renderAccounts(); renderTemplates();
 }
+// ===== Вспомогательные in-app диалоги (надёжнее window.alert/confirm в мобильных браузерах и PWA) =====
+function showConfirm(message, onYes) {
+  const text = document.getElementById('modal-confirm-text');
+  if (text) text.textContent = message;
+  const yesBtn = document.getElementById('modal-confirm-yes');
+  if (yesBtn) yesBtn.onclick = () => { closeModal('modal-confirm'); if (onYes) onYes(); };
+  openModal('modal-confirm');
+}
+function showAlert(message) {
+  return new Promise((resolve) => {
+    const text = document.getElementById('modal-confirm-text');
+    if (text) text.textContent = message;
+    const yesBtn = document.getElementById('modal-confirm-yes');
+    const noBtn = document.getElementById('modal-confirm-no');
+    if (noBtn) noBtn.classList.add('hidden');
+    if (yesBtn) {
+      yesBtn.textContent = 'ОК';
+      yesBtn.onclick = () => {
+        closeModal('modal-confirm');
+        // восстановить стандартный вид диалога подтверждения на будущее
+        yesBtn.textContent = 'Да';
+        if (noBtn) noBtn.classList.remove('hidden');
+        resolve();
+      };
+    } else { resolve(); }
+    openModal('modal-confirm');
+  });
+}
+
 async function applyReplaceImport(data) {
   for (const s of STORES) await dbClearStore(s);
   const putAll = async (storeName, items) => {
@@ -578,7 +607,7 @@ async function applyReplaceImport(data) {
   await putAll('archive', data.archive);
   await reloadAllStateAfterImport();
   renderEverythingAfterImport();
-  alert('Импорт завершён: все данные заменены на версию из файла.');
+  showAlert('Импорт завершён: все данные заменены на версию из файла.');
 }
 async function applySmartMergeImport(data) {
   const stats = { added: 0, updated: 0, kept: 0 };
@@ -605,11 +634,13 @@ async function applySmartMergeImport(data) {
   await mergeStore('archive', data.archive);
   await reloadAllStateAfterImport();
   renderEverythingAfterImport();
-  alert('Умное слияние завершено.\nНовых записей добавлено: ' + stats.added + '\nОбновлено (взята более свежая версия): ' + stats.updated + '\nОставлено без изменений (текущая версия оказалась свежее): ' + stats.kept);
+  showAlert('Слияние завершено.\nДобавлено новых записей: ' + stats.added + '\nОбновлено (взята более свежая версия): ' + stats.updated + '\nОставлено без изменений (текущая версия оказалась свежее): ' + stats.kept);
 }
 let pendingImportData = null;
+let importChoiceBusy = false;
 function openImportChoiceModal(data) {
   pendingImportData = data;
+  importChoiceBusy = false;
   const counts = [
     ['операций', data.operations], ['счетов', data.accounts], ['категорий', data.categories],
     ['долгов', data.debts], ['шаблонов', data.templates], ['записей архива', data.archive]
@@ -624,22 +655,31 @@ function setupImportChoiceModal() {
   const cancelBtn = document.getElementById('btn-import-cancel');
   const xBtn = document.getElementById('btn-import-choice-close');
   if (cancelBtn) cancelBtn.onclick = close;
-  if (xBtn) xBtn.onclick = close;
+  if (xBtn) { xBtn.classList.add('modal-x'); xBtn.onclick = close; }
   const replaceBtn = document.getElementById('btn-import-replace');
-  if (replaceBtn) replaceBtn.onclick = async () => {
-    if (!pendingImportData) return close();
-    if (!window.confirm('ВНИМАНИЕ: текущие данные (счета, операции, долги, шаблоны, архив) будут полностью удалены и заменены данными из файла.\n\nПродолжить?')) return;
-    close();
-    try { await applyReplaceImport(pendingImportData); } catch (e) { alert('Ошибка импорта: ' + e.message); }
-    pendingImportData = null;
+  if (replaceBtn) replaceBtn.onclick = () => {
+    if (!pendingImportData || importChoiceBusy) return;
+    // Подтверждение перезаписи — in-app диалог (window.confirm может молча блокироваться в мобильных браузерах/PWA)
+    showConfirm('ВНИМАНИЕ: текущие данные (счета, операции, долги, шаблоны, архив) будут полностью удалены и заменены данными из файла. Продолжить?', async () => {
+      close();
+      try { await applyReplaceImport(pendingImportData); } catch (e) { showAlert('Ошибка импорта: ' + e.message); }
+      pendingImportData = null;
+    });
   };
   const mergeBtn = document.getElementById('btn-import-merge');
   if (mergeBtn) mergeBtn.onclick = async () => {
-    if (!pendingImportData) return close();
+    if (!pendingImportData || importChoiceBusy) return;
+    importChoiceBusy = true;
+    setImportChoiceButtonsDisabled(true);
     close();
-    try { await applySmartMergeImport(pendingImportData); } catch (e) { alert('Ошибка слияния: ' + e.message); }
+    try { await applySmartMergeImport(pendingImportData); } catch (e) { showAlert('Ошибка слияния: ' + e.message); }
     pendingImportData = null;
+    importChoiceBusy = false;
+    setImportChoiceButtonsDisabled(false);
   };
+}
+function setImportChoiceButtonsDisabled(disabled) {
+  ['btn-import-replace', 'btn-import-merge'].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = disabled; });
 }
 async function importJSON(file) {
   try {
@@ -649,6 +689,7 @@ async function importJSON(file) {
     if (!data || typeof data !== 'object') throw new Error('Неверный формат файла');
     const hasAny = STORES.some(s => Array.isArray(data[s]) && data[s].length);
     if (!hasAny) throw new Error('В файле нет данных для импорта');
+    // Показываем окно выбора режима ДО любых изменений базы: «Заменить все данные» / «Обновить данные»
     openImportChoiceModal(data);
   } catch (err) {
     alert('Ошибка чтения файла: ' + err.message);
