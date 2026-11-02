@@ -642,8 +642,34 @@ async function init() {
 }
 
 document.addEventListener('submit', (e) => { e.preventDefault(); }, true);
+
+// Мобильный режим: добавляем класс body, если экран узкий ИЛИ приложение
+// запущено как PWA (standalone/fullscreen/minimal-ui). Это гарантирует,
+// что на телефоне всегда открывается мобильная версия, а не десктопная.
+function updateMobileMode() {
+  const mqNarrow = window.matchMedia('(max-width: 768px)');
+  const mqStandalone = window.matchMedia('(display-mode: standalone)');
+  const mqFullscreen = window.matchMedia('(display-mode: fullscreen)');
+  const mqMinimal = window.matchMedia('(display-mode: minimal-ui)');
+  const legacyStandalone = !window.matchMedia('(display-mode: browser)').matches && navigator.standalone === true; // iOS Safari
+  const mobile = mqNarrow.matches || mqStandalone.matches || mqFullscreen.matches || mqMinimal.matches || legacyStandalone;
+  document.body.classList.toggle('mobile-mode', mobile);
+  document.body.classList.toggle('desktop-mode', !mobile);
+}
+['resize', 'orientationchange'].forEach(ev => window.addEventListener(ev, updateMobileMode));
+[
+  '(max-width: 768px)',
+  '(display-mode: standalone)',
+  '(display-mode: fullscreen)',
+  '(display-mode: minimal-ui)'
+].forEach(q => {
+  const mq = window.matchMedia(q);
+  if (mq.addEventListener) mq.addEventListener('change', updateMobileMode);
+  else if (mq.addListener) mq.addListener(updateMobileMode);
+});
+
 if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js')); }
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => { updateMobileMode(); init(); });
 // Экспорт для inline-обработчиков в отчётах
 window.state = state;
 window.openOperationForm = openOperationForm;

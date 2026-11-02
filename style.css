@@ -26,15 +26,27 @@ h3 { font-size: 17px; font-weight: 600; margin: 0 0 12px 0; }
 .screen.active { display: block; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
+/* Адаптивность: мобильный режим включается либо по узкому экрану,
+   либо когда приложение запущено как PWA (standalone/fullscreen),
+   чтобы на телефоне не открывалась десктопная версия. */
 .mobile-only { display: none; }
 .desktop-only { display: block; }
-@media (max-width: 768px) {
-  .desktop-only { display: none; }
-  .mobile-only { display: flex; }
+@media (max-width: 768px), (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  .desktop-only { display: none !important; }
+  .mobile-only { display: flex !important; }
 }
+/* Класс mobile-mode выставляется скриптом (узкий экран или запуск как PWA),
+   дублирует мобильную раскладку для случаев, когда медиазапрос недоступен */
+body.mobile-mode .desktop-only { display: none !important; }
+body.mobile-mode .mobile-only { display: flex !important; }
+body.desktop-mode .mobile-only { display: none; }
+body.desktop-mode .desktop-only { display: block; }
 
 /* Шапка */
 .app-header { display: flex; align-items: center; gap: 20px; padding: 16px 24px; background: var(--bg); position: sticky; top: 0; z-index: 10; }
+.app-header-mobile { justify-content: space-between; padding: calc(12px + env(safe-area-inset-top)) 16px 12px; }
+.app-header-mobile h1 { font-size: 20px; }
+.theme-toggle { font-size: 20px; background: none; border: none; cursor: pointer; color: var(--text); }
 .main-nav { display: flex; gap: 8px; flex: 1; }
 .main-nav button { background: transparent; border: none; padding: 8px 16px; color: var(--text-secondary); cursor: pointer; border-radius: 20px; font-size: 15px; font-weight: 500; transition: all 0.2s; }
 .main-nav button:hover { background: var(--input-bg); color: var(--text); }
@@ -133,3 +145,54 @@ form input:focus, form select:focus { background: var(--card-bg); border-color: 
 .report-tabs button.active { background: var(--card-bg); color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
 .report-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 8px; border-bottom: 1px solid var(--border); cursor: pointer; border-radius: 8px; transition: background 0.2s; }
 .report-row:hover { background: var(--input-bg); }
+/* ===== Мобильная адаптация ===== */
+@media (max-width: 768px) {
+  html { -webkit-text-size-adjust: 100%; }
+  body { padding-bottom: calc(90px + env(safe-area-inset-bottom)); font-size: 15px; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 18px; }
+  .screen { padding: 14px 10px; }
+  .card { padding: 16px; border-radius: 16px; margin-bottom: 12px; }
+  .dashboard-grid { grid-template-columns: 1fr !important; gap: 12px; }
+
+  /* Фильтры истории — в одну колонку */
+  .filters-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+  .filters-row select, .filters-row input[type="number"] { width: 100%; }
+  .custom-period { display: flex; flex-direction: column; gap: 8px; }
+  .custom-period label { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; }
+  .custom-period input[type="date"] { flex: 1; min-width: 0; }
+
+  /* Списки операций компактнее */
+  .operation-item { padding: 12px; gap: 8px; }
+  .op-amount { font-size: 16px; }
+  .btn-small { padding: 8px 12px; }
+
+  /* Отчёты */
+  .report-tabs button { padding: 9px 6px; font-size: 14px; }
+  .report-period { display: flex; flex-direction: column; gap: 8px; }
+  .report-period label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+
+  /* Настройки */
+  .settings-section { padding: 16px; margin-bottom: 16px; }
+  .export-import-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  /* Модальные окна на весь экран, удобнее скролл и крупные поля */
+  .modal { align-items: flex-end; }
+  .modal-content { max-width: 100%; max-height: 92vh; border-radius: 24px 24px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); }
+  form input, form select, form textarea { font-size: 16px; padding: 12px 14px; } /* 16px — чтобы iOS не зумил страницу при фокусе */
+  .form-buttons button { min-width: 0; }
+
+  /* Нижняя навигация с учётом вырезов/жестов */
+  .bottom-nav { padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); }
+}
+
+/* Очень маленькие экраны (iPhone SE и т.п.) */
+@media (max-width: 380px) {
+  .bottom-nav button span { font-size: 9px; }
+  .bottom-nav .nav-center-btn { flex: 0 0 56px !important; width: 56px !important; height: 56px !important; font-size: 30px !important; margin-top: -26px !important; }
+}
+
+/* Планшеты в портретной ориентации */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .dashboard-grid { grid-template-columns: 1fr 1fr; }
+}
