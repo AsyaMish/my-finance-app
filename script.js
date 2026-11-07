@@ -44,6 +44,10 @@ function formatMoney(n) {
   return parts.join(',');
 }
 function parseNumber(v) { return parseFloat(String(v).replace(',', '.')) || 0; }
+// === Деньги: все расчёты в копейках (целые числа), чтобы не было хвостов вида 0,01 ₽ ===
+function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+function toK(n) { return Math.round((Number(n) || 0) * 100); }
+function fromK(k) { return k / 100; }
 function todayISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 function startOfWeekISO() {
   const d = new Date(); d.setHours(0,0,0,0);
@@ -89,13 +93,21 @@ function closeAllModals() { $$('.modal').forEach(m => m.classList.add('hidden'))
 function markFormDirty(f) { const m = f.closest('.modal'); if (m) m.dataset.dirty = 'true'; }
 function clearFormDirty(f) { const m = f.closest('.modal'); if (m) m.dataset.dirty = 'false'; }
 function isFormDirty(f) { const m = f.closest('.modal'); return !!m && m.dataset.dirty === 'true'; }
-function tryCloseModal(id) { const m = document.getElementById(id); if (!m) return; const f = m.querySelector('form'); if (f && isFormDirty(f)) { if (!window.confirm('Закрыть без сохранения?')) return; } m.classList.add('hidden'); if (f) clearFormDirty(f); }
+function tryCloseModal(id) { const m = document.getElementById(id); if (!m) return; const f = m.querySelector('form'); const doClose = () => { m.classList.add('hidden'); if (f) clearFormDirty(f); }; if (f && isFormDirty(f)) showConfirm('Закрыть без сохранения?', doClose); else doClose(); }
 
 async function loadAccounts() { state.accounts = await dbGetAll('accounts'); if (!state.accounts.length) { for (const a of DEFAULT_ACCOUNTS) await dbPut('accounts', a); state.accounts = [...DEFAULT_ACCOUNTS]; } }
 function renderAccounts() { const l = document.getElementById('accounts-list'); if (!l) return; l.innerHTML = ''; const t = document.getElementById('account-item-template'); state.accounts.forEach(a => { const n = t.content.firstElementChild.cloneNode(true); n.dataset.id = a.id; n.querySelector('.item-name').textContent = a.name; n.querySelector('.item-balance').textContent = formatMoney(a.initialBalance) + ' ₽'; n.querySelector('.item-edit').onclick = () => editAccount(a.id); n.querySelector('.item-delete').onclick = () => deleteAccount(a.id); l.appendChild(n); }); renderDashboard(); }
-async function addAccount() { const name = prompt('Название счёта:', ''); if (!name?.trim()) return; const bStr = prompt('Начальный остаток:', '0'); if (bStr === null) return; const acc = { id: uid('acc'), name: name.trim(), initialBalance: parseNumber(bStr), createdAt: Date.now() }; await dbPut('accounts', acc); state.accounts.push(acc); renderAccounts(); }
-async function editAccount(id) { const a = state.accounts.find(x => x.id === id); if (!a) return; const name = prompt('Название:', a.name); if (!name?.trim()) return; const bStr = prompt('Остаток:', String(a.initialBalance)); if (bStr === null) return; a.name = name.trim(); a.initialBalance = parseNumber(bStr); await dbPut('accounts', a); renderAccounts(); }
-async function deleteAccount(id) { if (state.accounts.length <= 1) return alert('Последний счёт нельзя удалить.'); const a = state.accounts.find(x => x.id === id); if (!a) return; const ops = state.operations.filter(o => o.accountId === id); if (ops.length) { if (!window.confirm('Удалить счёт и его операции?')) return; for (const o of ops) await dbDelete('operations', o.id); state.operations = state.operations.filter(o => o.accountId !== id); } else { if (!window.confirm('Удалить счёт?')) return; } await dbDelete('accounts', id); state.accounts = state.accounts.filter(x => x.id !== id); renderAccounts(); renderOperations(); }
+async function addAccount() {
+  showPrompt('Название счёта:', '', (name) => {
+    if (!name || !name.trim()) return;
+    showPrompt('Начальный остаток:', '0', (bStr) => {
+      const acc = { id: uid('acc'), name: name.trim(), initialBalance: round2(parseNumber(bStr)), createdAt: Date.now() };
+      dbPut('accounts', acc).then(() => { state.accounts.push(acc); renderAccounts(); });
+    });
+  });
+}
+async function editAccount(id) { const a = state.accounts.find(x => x.id === id); if (!a) return; showPrompt('Название:', a.name, (name) => { if (!name || !name.trim()) return; showPrompt('Остаток:', String(a.initialBalance), (bStr) => { a.name = name.trim(); a.initialBalance = round2(parseNumber(bStr)); dbPut('accounts', a).then(() => renderAccounts()); }); }); }
+async function deleteAccount(id) { if (state.accounts.length <= 1) { showAlert('Последний счёт нельзя удалить.'); return; } const a = state.accounts.find(x => x.id === id); if (!a) return; const ops = state.operations.filter(o => o.accountId === id); const doDelete = async () => { for (const o of ops) await dbDelete('operations', o.id); state.operations = state.operations.filter(o => o.accountId !== id); await dbDelete('accounts', id); state.accounts = state.accounts.filter(x => x.id !== id); renderAccounts(); renderOperations(); }; showConfirm(ops.length ? 'Удалить счёт и все его операции?' : 'Удалить счёт?', doDelete); }
 
 async function loadCategories() { state.categories = await dbGetAll('categories'); if (!state.categories.length) { const s = [...DEFAULT_INCOME_CATEGORIES, ...DEFAULT_EXPENSE_CATEGORIES]; for (const c of s) await dbPut('categories', c); state.categories = [...s]; } }
 function renderCategories() {
@@ -113,9 +125,9 @@ function renderCategories() {
     l.appendChild(n);
   });
 }
-async function addCategory(type) { const name = prompt('Название категории:', ''); if (!name?.trim()) return; const cat = { id: uid('cat'), type, name: name.trim(), createdAt: Date.now(), order: Date.now() }; await dbPut('categories', cat); state.categories.push(cat); renderCategories(); }
-async function editCategory(id) { const c = state.categories.find(x => x.id === id); if (!c) return; const name = prompt('Название:', c.name); if (!name?.trim()) return; c.name = name.trim(); await dbPut('categories', c); renderCategories(); }
-async function deleteCategory(id) { const c = state.categories.find(x => x.id === id); if (!c) return; const ops = state.operations.filter(o => o.categoryId === id); if (ops.length) { if (!window.confirm('Оставить операции без категории?')) return; for (const o of ops) { o.categoryId = ''; await dbPut('operations', o); } } else { if (!window.confirm('Удалить категорию?')) return; } await dbDelete('categories', id); state.categories = state.categories.filter(x => x.id !== id); renderCategories(); renderOperations(); }
+async function addCategory(type) { showPrompt('Название категории:', '', (name) => { if (!name || !name.trim()) return; const cat = { id: uid('cat'), type, name: name.trim(), createdAt: Date.now(), order: Date.now() }; dbPut('categories', cat).then(() => { state.categories.push(cat); renderCategories(); }); }); }
+async function editCategory(id) { const c = state.categories.find(x => x.id === id); if (!c) return; showPrompt('Название:', c.name, (name) => { if (!name || !name.trim()) return; c.name = name.trim(); dbPut('categories', c).then(() => renderCategories()); }); }
+async function deleteCategory(id) { const c = state.categories.find(x => x.id === id); if (!c) return; const ops = state.operations.filter(o => o.categoryId === id); const doDelete = async () => { for (const o of ops) { o.categoryId = ''; await dbPut('operations', o); } await dbDelete('categories', id); state.categories = state.categories.filter(x => x.id !== id); renderCategories(); renderOperations(); }; showConfirm(ops.length ? 'Операции этой категории останутся без категории. Удалить?' : 'Удалить категорию?', doDelete); }
 async function moveCategory(id, dir) {
   const c = state.categories.find(x => x.id === id); if (!c) return;
   const t = state.categories.filter(x => x.type === c.type).sort((a,b) => (a.order || 0) - (b.order || 0));
@@ -146,14 +158,14 @@ function addTemplateFieldInput(v = '') { const l = document.getElementById('temp
 async function saveTemplate(e) {
   e.preventDefault(); const id = document.getElementById('template-id').value || uid('tpl'); const existing = state.templates.find(x => x.id === id);
   const name = document.getElementById('template-name').value.trim(); const type = document.getElementById('template-type').value;
-  if (!name) return alert('Введите имя'); const fields = [];
+  if (!name) { showAlert('Введите имя'); return; } const fields = [];
   $$('#template-fields-list .template-field-name').forEach((inp, i) => { if (inp.value.trim()) fields.push({ id: 'fld_' + uid(), name: inp.value.trim() }); });
-  if (!fields.length) return alert('Добавьте поля');
+  if (!fields.length) { showAlert('Добавьте поля'); return; }
   const t = { id, name, type, fields, createdAt: existing ? existing.createdAt : Date.now() };
   await dbPut('templates', t); if (existing) state.templates[state.templates.findIndex(x => x.id === id)] = t; else state.templates.push(t);
   clearFormDirty(document.getElementById('template-form')); closeModal('modal-template'); renderTemplates(); fillTemplateSelect();
 }
-async function deleteTemplate(id) { if (!window.confirm('Удалить шаблон?')) return; await dbDelete('templates', id); state.templates = state.templates.filter(x => x.id !== id); renderTemplates(); fillTemplateSelect(); }
+async function deleteTemplate(id) { showConfirm('Удалить шаблон?', async () => { await dbDelete('templates', id); state.templates = state.templates.filter(x => x.id !== id); renderTemplates(); fillTemplateSelect(); }); }
 
 async function loadDebts() { state.debts = await dbGetAll('debts'); }
 function resetDebtForm() {
@@ -170,6 +182,7 @@ function resetDebtForm() {
   const tot = document.getElementById('debt-total'); if (tot) tot.value = '';
   const dd = document.getElementById('debt-due-date'); if (dd) dd.value = '';
   const cm = document.getElementById('debt-comment'); if (cm) cm.value = '';
+  const db = document.getElementById('btn-delete-debt'); if (db) db.classList.add('hidden');
 }
 
 function fillDebtForm(debt) {
@@ -188,6 +201,7 @@ function fillDebtForm(debt) {
   document.getElementById('debt-total').value = tot ? Number(tot).toFixed(2) : '';
   document.getElementById('debt-due-date').value = debt.dueDate || '';
   document.getElementById('debt-comment').value = debt.comment || '';
+  const db = document.getElementById('btn-delete-debt'); if (db) db.classList.remove('hidden');
 }
 
 function openDebtForm(debt = null) {
@@ -202,7 +216,7 @@ function calcCreditTotal() {
   const term = parseNumber(document.getElementById('debt-term').value);
   const rate = parseNumber(document.getElementById('debt-rate').value);
   // Упрощённый расчёт: сумма + проценты за весь срок
-  const total = amount + (amount * (rate / 100) * (term / 12));
+  const total = round2(amount + (amount * (rate / 100) * (term / 12)));
   const el = document.getElementById('debt-total');
   if (el) el.value = total ? total.toFixed(2) : '';
 }
@@ -214,17 +228,17 @@ async function saveDebt(e) {
   
   const direction = document.getElementById('debt-direction').value;
   const name = document.getElementById('debt-name').value.trim();
-  const initialAmount = parseNumber(document.getElementById('debt-amount').value);
+  const initialAmount = round2(parseNumber(document.getElementById('debt-amount').value));
   const isPlanned = document.getElementById('debt-is-planned').checked;
   const isCredit = document.getElementById('debt-is-credit').checked;
   const term = isCredit ? parseNumber(document.getElementById('debt-term').value) : 0;
   const rate = isCredit ? parseNumber(document.getElementById('debt-rate').value) : 0;
-  const totalAmount = isCredit ? parseNumber(document.getElementById('debt-total').value) : initialAmount;
+  const totalAmount = isCredit ? round2(parseNumber(document.getElementById('debt-total').value)) : initialAmount;
   const dueDate = document.getElementById('debt-due-date').value;
   const comment = document.getElementById('debt-comment').value.trim();
   
-  if (!name) return alert('Введите название долга.');
-  if (!(initialAmount > 0)) return alert('Введите сумму.');
+  if (!name) { showAlert('Введите название долга.'); return; }
+  if (!(initialAmount > 0)) { showAlert('Введите сумму.'); return; }
   
   const debt = {
     id, direction, name, initialAmount, isPlanned, isCredit,
@@ -245,6 +259,19 @@ async function saveDebt(e) {
   renderReports();
 }
 
+async function performDeleteDebt(id) {
+  const linkedOps = state.operations.filter(o => o.linkedDebtId === id);
+  for (const op of linkedOps) {
+    op.linkedDebtId = '';
+    await dbPut('operations', op);
+  }
+  await dbDelete('debts', id);
+  state.debts = state.debts.filter(d => d.id !== id);
+  renderDashboard();
+  renderOperations();
+  fillDebtSelect();
+  renderReports();
+}
 async function deleteDebt(id) {
   const debt = state.debts.find(d => d.id === id);
   if (!debt) return;
@@ -254,28 +281,15 @@ async function deleteDebt(id) {
   if (linkedOps.length) {
     msg += `\nС ним связано ${linkedOps.length} операций. Связь с долгом будет удалена.`;
   }
-  if (!window.confirm(msg)) return;
-  
-  // Отвязываем операции от удаляемого долга
-  for (const op of linkedOps) {
-    op.linkedDebtId = '';
-    await dbPut('operations', op);
-  }
-  
-  await dbDelete('debts', id);
-  state.debts = state.debts.filter(d => d.id !== id);
-  renderDashboard();
-  renderOperations();
-  fillDebtSelect();
-  renderReports();
+  showConfirm(msg, () => performDeleteDebt(id));
 }
-function getDebtRemaining(d) { let p = 0; state.operations.forEach(o => { if (o.linkedDebtId === d.id && !o.isPlanned) p += o.amount; }); return Math.max(0, (d.initialAmount || 0) - p); }
-function getDebtsTotal(dir) { let t = 0; state.debts.forEach(d => { if (!d.isPlanned && d.direction === dir) t += getDebtRemaining(d); }); return t; }
+function getDebtRemaining(d) { let p = 0; state.operations.forEach(o => { if (o.linkedDebtId === d.id && !o.isPlanned) p += toK(o.amount); }); return Math.max(0, toK(d.initialAmount || 0) - p) / 100; }
+function getDebtsTotal(dir) { let t = 0; state.debts.forEach(d => { if (!d.isPlanned && d.direction === dir) t += toK(getDebtRemaining(d)); }); return fromK(t); }
 
 async function loadOperations() { state.operations = await dbGetAll('operations'); }
-function getOperationsBalance(accId) { let t = 0; state.operations.forEach(o => { if (o.accountId === accId && !o.isPlanned && !o.excludeFromBalance) t += o.type === 'income' ? o.amount : -o.amount; }); return t; }
-function getPeriodStats(f, t) { let i = 0, e = 0; state.operations.forEach(o => { if (o.isPlanned || o.excludeFromBalance || !o.date || o.date < f || o.date > t) return; if (o.type === 'income') i += o.amount; else e += o.amount; }); return { income: i, expense: e }; }
-function getPlannedExpensesTotal() { let t = 0; state.operations.forEach(o => { if (o.isPlanned && o.type === 'expense') t += o.amount; }); return t; }
+function getOperationsBalance(accId) { let t = 0; state.operations.forEach(o => { if (o.accountId === accId && !o.isPlanned && !o.excludeFromBalance) t += toK(o.amount) * (o.type === 'income' ? 1 : -1); }); return fromK(t); }
+function getPeriodStats(f, t) { let i = 0, e = 0; state.operations.forEach(o => { if (o.isPlanned || o.excludeFromBalance || !o.date || o.date < f || o.date > t) return; if (o.type === 'income') i += toK(o.amount); else e += toK(o.amount); }); return { income: fromK(i), expense: fromK(e) }; }
+function getPlannedExpensesTotal() { let t = 0; state.operations.forEach(o => { if (o.isPlanned && o.type === 'expense') t += toK(o.amount); }); return fromK(t); }
 
 function renderDashboard() {
   const aB = document.getElementById('balance-accounts'); if (aB) {
@@ -300,10 +314,10 @@ function updateDashboardPeriodStats() {
 function isManualSum() { return !document.getElementById('manual-sum-indicator').classList.contains('hidden'); }
 function showManualIndicator(s) { document.getElementById('manual-sum-indicator').classList.toggle('hidden', !s); }
 function disableNestedInputs(d) { $$('#nested-fields-list input').forEach(i => i.disabled = d); $$('#nested-fields-list button').forEach(b => b.disabled = d); }
-function recalcNestedTotal() { if (isManualSum()) return; let tot = 0; $$('#nested-fields-list .nested-value').forEach(i => tot += parseNumber(i.value)); const a = document.getElementById('op-amount'); if (a) a.value = tot ? tot.toFixed(2) : ''; }
+function recalcNestedTotal() { if (isManualSum()) return; let tot = 0; $$('#nested-fields-list .nested-value').forEach(i => tot += toK(parseNumber(i.value))); const a = document.getElementById('op-amount'); if (a) a.value = tot ? fromK(tot).toFixed(2) : ''; }
 function addNestedField(n = '', v = '') {
   const l = document.getElementById('nested-fields-list'); if (!l) return; const d = document.createElement('div'); d.className = 'nested-field-row';
-  d.innerHTML = `<input type="text" class="nested-name" placeholder="Название" value="${n}"><input type="number" class="nested-value" step="0.01" placeholder="0.00" value="${v}"><button type="button" class="btn-small nested-remove">×</button>`;
+  d.innerHTML = `<input type="text" class="nested-name" placeholder="Название" value="${n}"><input type="text" class="nested-value" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${v}"><button type="button" class="btn-small nested-remove">×</button>`;
   l.appendChild(d);
   d.querySelector('.nested-value').oninput = () => { if (!isManualSum()) recalcNestedTotal(); };
   d.querySelector('.nested-remove').onclick = () => { d.remove(); if (!isManualSum()) recalcNestedTotal(); };
@@ -315,13 +329,14 @@ function fillOperationSelects() {
   fillCategorySelect(); fillDebtSelect(); fillTemplateSelect();
 }
 function fillCategorySelect(sel = '') { const s = document.getElementById('op-category'); if (!s) return; const t = document.getElementById('op-type').value; s.innerHTML = ''; state.categories.filter(c => c.type === t).forEach(c => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; if (c.id === sel) o.selected = true; s.appendChild(o); }); }
-function fillDebtSelect(sel = '') { const s = document.getElementById('op-linked-debt'); if (!s) return; s.innerHTML = '<option value="">— Не связывать —</option>'; state.debts.forEach(d => { const r = getDebtRemaining(d); if (!d.isPlanned && r <= 0) return; const o = document.createElement('option'); o.value = d.id; o.textContent = `${d.direction === 'i-owe' ? 'Я должна' : 'Мне должны'}: ${d.name} ${d.isPlanned ? '(план)' : `· остаток ${formatMoney(r)} ₽`}`; if (d.id === sel) o.selected = true; s.appendChild(o); }); }
+function fillDebtSelect(sel = '') { const s = document.getElementById('op-linked-debt'); if (!s) return; s.innerHTML = '<option value="">— Не связывать —</option>'; state.debts.forEach(d => { const r = getDebtRemaining(d); const isSel = d.id === sel; if (!d.isPlanned && r <= 0 && !isSel) return; const o = document.createElement('option'); o.value = d.id; o.textContent = `${d.direction === 'i-owe' ? 'Я должна' : 'Мне должны'}: ${d.name} ${d.isPlanned ? '(план)' : `· остаток ${formatMoney(r)} ₽`}`; if (d.id === sel) o.selected = true; s.appendChild(o); }); }
 function fillTemplateSelect() { const s = document.getElementById('op-template'); if (!s) return; s.innerHTML = '<option value="">— Без шаблона —</option>'; state.templates.forEach(t => { const o = document.createElement('option'); o.value = t.id; o.textContent = t.name; s.appendChild(o); }); }
 
 function resetOperationForm() {
   document.getElementById('operation-id').value = ''; document.getElementById('operation-form-title').textContent = 'Новая операция';
   document.getElementById('op-type').value = 'expense'; document.getElementById('op-amount').value = ''; document.getElementById('op-comment').value = ''; document.getElementById('op-date').value = todayISO();
   document.getElementById('op-is-planned').checked = false; document.getElementById('op-exclude-balance').checked = false; document.getElementById('op-template').value = ''; document.getElementById('op-linked-debt').value = '';
+  const db = document.getElementById('btn-delete-operation'); if (db) db.classList.add('hidden');
   clearNestedFields(); showManualIndicator(false); disableNestedInputs(false); fillOperationSelects();
 }
 function fillOperationForm(op) {
@@ -330,35 +345,49 @@ function fillOperationForm(op) {
   document.getElementById('op-account').value = op.accountId || ''; document.getElementById('op-comment').value = op.comment || ''; document.getElementById('op-date').value = op.date || '';
   document.getElementById('op-is-planned').checked = !!op.isPlanned; document.getElementById('op-exclude-balance').checked = !!op.excludeFromBalance;
   fillDebtSelect(op.linkedDebtId || ''); document.getElementById('op-linked-debt').value = op.linkedDebtId || ''; document.getElementById('op-template').value = '';
+  const db = document.getElementById('btn-delete-operation'); if (db) db.classList.toggle('hidden', !op.id);
   clearNestedFields(); if (op.nested?.length) { op.nested.forEach(f => addNestedField(f.name, f.value ? f.value.toFixed(2) : '')); if (op.manualSum) { showManualIndicator(true); disableNestedInputs(true); } else { showManualIndicator(false); disableNestedInputs(false); } } else { showManualIndicator(false); disableNestedInputs(false); }
 }
 function openOperationForm(op = null) { fillOperationSelects(); if (op) fillOperationForm(op); else resetOperationForm(); openModal('modal-operation'); }
 
 async function saveOperationWithDebtCheck(e) {
   e.preventDefault(); const id = document.getElementById('operation-id').value || uid('op'); const existing = state.operations.find(o => o.id === id);
-  const type = document.getElementById('op-type').value; const amount = parseNumber(document.getElementById('op-amount').value); const accountId = document.getElementById('op-account').value;
+  const type = document.getElementById('op-type').value; const amount = round2(parseNumber(document.getElementById('op-amount').value)); const accountId = document.getElementById('op-account').value;
   const categoryId = document.getElementById('op-category').value; const date = document.getElementById('op-date').value; const comment = document.getElementById('op-comment').value.trim();
   const isPlanned = document.getElementById('op-is-planned').checked; const excludeFromBalance = document.getElementById('op-exclude-balance').checked;
   const linkedDebtId = document.getElementById('op-linked-debt').value || ''; const manualSum = isManualSum();
-  const nested = []; $$('#nested-fields-list .nested-field-row').forEach(r => { const n = r.querySelector('.nested-name').value.trim(); const v = parseNumber(r.querySelector('.nested-value').value); if (n || v) nested.push({ name: n, value: v }); });
-  if (!accountId) return alert('Выберите счёт.'); if (!amount) return alert('Введите сумму.');
+  const nested = []; $$('#nested-fields-list .nested-field-row').forEach(r => { const n = r.querySelector('.nested-name').value.trim(); const v = round2(parseNumber(r.querySelector('.nested-value').value)); if (n || v) nested.push({ name: n, value: v }); });
+  if (!accountId) { showAlert('Выберите счёт.'); return; } if (!amount) { showAlert('Введите сумму.'); return; }
+  const writeSimple = async () => {
+    const op = { id, type, amount, accountId, categoryId, date, comment, isPlanned, excludeFromBalance, linkedDebtId, nested, manualSum, createdAt: existing ? existing.createdAt : Date.now(), updatedAt: Date.now() };
+    await dbPut('operations', op); if (existing) state.operations[state.operations.findIndex(o => o.id === id)] = op; else state.operations.push(op);
+    finishOperationSave();
+  };
+  // Редактирование существующей записи: обновляем её же — без создания дополнительных операций.
+  // Остаток долга пересчитывается автоматически (в т.ч. закрывается «хвостик» в копейки).
+  if (existing) { await writeSimple(); return; }
+  // Новая запись с привязкой к долгу: если сумма больше остатка — предлагаем разделить (погашение + переплата)
   if (linkedDebtId && !isPlanned) {
     const debt = state.debts.find(d => d.id === linkedDebtId); if (debt) {
-      const remaining = getDebtRemaining(debt); if (amount > remaining + 0.0001) {
-        const overpay = amount - remaining; if (!window.confirm(`Переплата! Закрыть долг на ${formatMoney(remaining)} ₽, а переплату ${formatMoney(overpay)} ₽ записать отдельно?`)) return;
-        const p = { id: uid('op'), type, amount: remaining, accountId, categoryId, date, comment: (comment ? comment + ' · ' : '') + 'Погашение', isPlanned: false, excludeFromBalance, linkedDebtId, nested, manualSum, createdAt: Date.now(), updatedAt: Date.now() };
-        await dbPut('operations', p); state.operations.push(p);
-        const o = { id: uid('op'), type, amount: overpay, accountId, categoryId, date, comment: (comment ? comment + ' · ' : '') + 'Переплата', isPlanned: false, excludeFromBalance, linkedDebtId: '', nested: [], manualSum: false, createdAt: Date.now(), updatedAt: Date.now() };
-        await dbPut('operations', o); state.operations.push(o);
-        clearFormDirty(document.getElementById('operation-form')); closeModal('modal-operation'); renderDashboard(); renderOperations(); fillDebtSelect(); return;
+      const remainingK = toK(getDebtRemaining(debt)); const amountK = toK(amount);
+      if (amountK > remainingK) {
+        const payK = remainingK, overK = amountK - remainingK;
+        showConfirm(`Введённая сумма больше остатка долга на ${formatMoney(fromK(overK))} ₽.\nЗакрыть долг на ${formatMoney(fromK(payK))} ₽, а переплату ${formatMoney(fromK(overK))} ₽ записать отдельной операцией?`, async () => {
+          const p = { id: uid('op'), type, amount: fromK(payK), accountId, categoryId, date, comment: (comment ? comment + ' · ' : '') + 'Погашение', isPlanned: false, excludeFromBalance, linkedDebtId, nested, manualSum, createdAt: Date.now(), updatedAt: Date.now() };
+          await dbPut('operations', p); state.operations.push(p);
+          const o = { id: uid('op'), type, amount: fromK(overK), accountId, categoryId, date, comment: (comment ? comment + ' · ' : '') + 'Переплата', isPlanned: false, excludeFromBalance, linkedDebtId: '', nested: [], manualSum: false, createdAt: Date.now(), updatedAt: Date.now() };
+          await dbPut('operations', o); state.operations.push(o);
+          finishOperationSave();
+        });
+        return;
       }
     }
   }
-  const op = { id, type, amount, accountId, categoryId, date, comment, isPlanned, excludeFromBalance, linkedDebtId, nested, manualSum, createdAt: existing ? existing.createdAt : Date.now(), updatedAt: Date.now() };
-  await dbPut('operations', op); if (existing) state.operations[state.operations.findIndex(o => o.id === id)] = op; else state.operations.push(op);
-  clearFormDirty(document.getElementById('operation-form')); closeModal('modal-operation'); renderDashboard(); renderOperations(); fillDebtSelect();
+  await writeSimple();
 }
-async function deleteOperation(id) { const op = state.operations.find(o => o.id === id); if (!op) return; let msg = 'Удалить операцию?'; if (op.linkedDebtId) { const d = state.debts.find(x => x.id === op.linkedDebtId); msg = `Связана с долгом «${d ? d.name : '—'}». Удалить?`; } if (!window.confirm(msg)) return; await dbDelete('operations', id); state.operations = state.operations.filter(o => o.id !== id); renderDashboard(); renderOperations(); fillDebtSelect(); }
+function finishOperationSave() { clearFormDirty(document.getElementById('operation-form')); closeModal('modal-operation'); renderDashboard(); renderOperations(); fillDebtSelect(); if (state.currentScreen === 'reports') renderReports(); }
+async function performDeleteOperation(id) { await dbDelete('operations', id); state.operations = state.operations.filter(o => o.id !== id); state.selectedOperations.delete(id); renderDashboard(); renderOperations(); fillDebtSelect(); if (state.currentScreen === 'reports') renderReports(); }
+function deleteOperation(id) { const op = state.operations.find(o => o.id === id); if (!op) return; let msg = 'Удалить операцию?'; if (op.linkedDebtId) { const d = state.debts.find(x => x.id === op.linkedDebtId); msg = `Связана с долгом «${d ? d.name : '—'}». После удаления остаток долга увеличится. Удалить?`; } showConfirm(msg, () => performDeleteOperation(id)); }
 function copyOperation(id) { const op = state.operations.find(o => o.id === id); if (!op) return; fillOperationSelects(); fillOperationForm({ ...op, id: '' }); document.getElementById('operation-form-title').textContent = 'Копия'; document.getElementById('op-date').value = todayISO(); openModal('modal-operation'); }
 
 function fillFilterSelects() {
@@ -367,9 +396,10 @@ function fillFilterSelects() {
 }
 function getFilteredOperations() {
   let ops = [...state.operations];
-  // ДОБАВЛЯЕМ ДОЛГИ В ИСТОРИЮ (как псевдо-операции для отображения)
-  const fakeDebts = state.debts.filter(d => d.isPlanned).map(d => ({
-    id: d.id, isDebt: true, type: d.direction === 'i-owe' ? 'expense' : 'income', amount: d.initialAmount || 0, date: d.dueDate || '', comment: d.comment || '', isPlanned: true, excludeFromBalance: true, accountId: '', categoryId: '', linkedDebtId: d.id
+  // ДОБАВЛЯЕМ ВСЕ ДОЛГИ В ИСТОРИЮ (как псевдо-операции для отображения) — и плановые, и обычные:
+  // любую запись долга можно увидеть и удалить прямо из истории
+  const fakeDebts = state.debts.map(d => ({
+    id: d.id, isDebt: true, type: d.direction === 'i-owe' ? 'expense' : 'income', amount: d.initialAmount || 0, date: d.dueDate || '', comment: d.comment || '', isPlanned: !!d.isPlanned, excludeFromBalance: true, accountId: '', categoryId: '', linkedDebtId: d.id, createdAt: d.createdAt || 0, updatedAt: d.updatedAt || 0
   }));
   ops = [...ops, ...fakeDebts];
 
@@ -390,8 +420,22 @@ function getFilteredOperations() {
   if (sumFrom !== '') ops = ops.filter(o => o.amount >= parseNumber(sumFrom));
   if (sumTo !== '') ops = ops.filter(o => o.amount <= parseNumber(sumTo));
 
-  ops.sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return kb - ka; });
+  // === Сортировка: свежая дата сверху; внутри одного дня — в порядке появления в системе (свежая запись — самой верхней строкой) ===
+  ops.sort((a, b) => {
+    const ka = opDateKey(a), kb = opDateKey(b);
+    if (kb !== ka) return kb - ka;
+    const ca = a.createdAt || 0, cb = b.createdAt || 0;
+    if (cb !== ca) return cb - ca;
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
   return ops;
+}
+// Ключ сортировки: дата записи (локальный день); для записей без даты — день создания записи
+function opDateKey(o) {
+  if (o.date && /^\d{4}-\d{2}-\d{2}/.test(o.date)) { const p = o.date.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]).getTime(); }
+  const c = o.createdAt || 0;
+  if (c) { const d = new Date(c); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
+  return 0;
 }
 function renderOperations() {
   const l = document.getElementById('operations-list'); const e = document.getElementById('operations-empty'); if (!l) return; l.innerHTML = '';
@@ -402,8 +446,10 @@ function renderOperations() {
     const acc = state.accounts.find(a => a.id === op.accountId); const cat = state.categories.find(c => c.id === op.categoryId); const debt = state.debts.find(d => d.id === op.linkedDebtId);
     const aE = n.querySelector('.op-amount'); aE.textContent = (op.type === 'income' ? '+' : '−') + formatMoney(op.amount) + ' ₽'; aE.classList.add(op.type === 'income' ? 'income' : 'expense');
     n.querySelector('.op-category').textContent = cat ? cat.name : (op.isDebt ? 'Долг' : 'Без категории'); n.querySelector('.op-account').textContent = acc ? acc.name : '—'; n.querySelector('.op-date').textContent = op.date || 'Без даты';
-    let cT = op.comment || ''; if (debt && !op.isDebt) cT = (cT ? cT + ' · ' : '') + 'Долг: ' + debt.name; if (op.isDebt && debt) cT = `Долг: ${debt.name} ${cT}`; n.querySelector('.op-comment').textContent = cT;
+    let cT = op.comment || ''; if (debt && !op.isDebt) cT = (cT ? cT + ' · ' : '') + 'Долг: ' + debt.name; if (op.isDebt && debt) cT = `Долг: ${debt.name}${cT ? ' · ' + cT : ''}`; n.querySelector('.op-comment').textContent = cT;
     if (op.isPlanned) n.querySelector('.op-badge-plan').classList.remove('hidden');
+    if (op.excludeFromBalance && !op.isPlanned && !op.isDebt) n.querySelector('.op-badge-nobalance').classList.remove('hidden');
+    if (op.isDebt) n.querySelector('.op-badge-debt').classList.remove('hidden');
     const cb = n.querySelector('.op-select'); if (op.isDebt) cb.style.display = 'none'; else { cb.checked = state.selectedOperations.has(op.id); cb.onchange = () => { if (cb.checked) state.selectedOperations.add(op.id); else state.selectedOperations.delete(op.id); updateMassActionsVisibility(); }; }
     
     n.querySelector('.op-main').onclick = (ev) => {
@@ -419,7 +465,7 @@ function renderOperations() {
   }); updateMassActionsVisibility();
 }
 function updateMassActionsVisibility() { document.getElementById('mass-actions').classList.toggle('hidden', state.selectedOperations.size === 0); document.getElementById('selected-count').textContent = state.selectedOperations.size; }
-async function deleteSelectedOperations() { const ids = Array.from(state.selectedOperations); if (!ids.length) return; if (!window.confirm('Удалить выбранные?')) return; for (const id of ids) await dbDelete('operations', id); state.operations = state.operations.filter(o => !state.selectedOperations.has(o.id)); state.selectedOperations.clear(); renderDashboard(); renderOperations(); fillDebtSelect(); }
+function deleteSelectedOperations() { const ids = Array.from(state.selectedOperations); if (!ids.length) return; showConfirm('Удалить выбранные записи?', async () => { for (const id of ids) await dbDelete('operations', id); state.operations = state.operations.filter(o => !state.selectedOperations.has(o.id)); state.selectedOperations.clear(); renderDashboard(); renderOperations(); fillDebtSelect(); if (state.currentScreen === 'reports') renderReports(); }); }
 
 function getReportPeriod() { const s = document.getElementById('report-period-select'); const m = s ? s.value : 'current-month'; if (m === 'all') return { from: null, to: null }; if (m === 'custom') return { from: document.getElementById('report-date-from').value || null, to: document.getElementById('report-date-to').value || null }; return { from: startOfMonthISO(), to: endOfMonthISO() }; }
 function operationInPeriod(o, f, t) { if (!o.date) return false; if (f && o.date < f) return false; if (t && o.date > t) return false; return true; }
@@ -497,10 +543,11 @@ async function archiveOperations(ops, yearByOp) {
 async function archiveSelectedOperations() {
   const ids = Array.from(state.selectedOperations); if (!ids.length) return; const ops = state.operations.filter(o => ids.includes(o.id));
   const debtOps = ops.filter(o => o.linkedDebtId);
-if (debtOps.length && !window.confirm(`Среди выбранных ${debtOps.length} операций привязаны к долгам. После архивации остатки долгов увеличатся. Продолжить?`)) return;
-  const wD = ops.filter(o => !o.date); let msg = `Архивировать ${ops.length} операций?`; if (wD.length) msg += `\nУ ${wD.length} записей нет даты.`; if (!window.confirm(msg)) return;
-  let yB = {}; if (wD.length) { const yS = window.prompt(`В какой год архива? (по умолч. ${new Date().getFullYear()})`, String(new Date().getFullYear())); if (yS === null) return; const y = parseInt(yS); if (isNaN(y)) return; wD.forEach(o => yB[o.id] = y); }
-  await archiveOperations(ops, yB);
+  const wD = ops.filter(o => !o.date);
+  let msg = `Архивировать ${ops.length} операций?`;
+  if (wD.length) msg += `\nУ ${wD.length} записей нет даты — год архива определится автоматически.`;
+  if (debtOps.length) msg += `\nСреди выбранных ${debtOps.length} операций привязаны к долгам: после архивации остатки долгов увеличатся.`;
+  showConfirm(msg, () => archiveOperations(ops, {}));
 }
 async function autoArchiveOldOperations() {
   const old = state.operations.filter(o => o.date && isOlderThanOneYear(o.date)); if (!old.length) return;
@@ -524,9 +571,27 @@ function renderArchive() {
   const items = state.archive.filter(a => a.archiveYear === cur).sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0)); lB.innerHTML = ''; const t = document.getElementById('archive-item-template');
   items.forEach(a => { const n = t.content.firstElementChild.cloneNode(true); const aE = n.querySelector('.arch-amount'); aE.textContent = (a.type === 'income' ? '+' : '−') + formatMoney(a.amount) + ' ₽'; aE.classList.add(a.type === 'income' ? 'income' : 'expense'); n.querySelector('.arch-category').textContent = a.categoryName; n.querySelector('.arch-date').textContent = a.date || 'Без даты'; n.querySelector('.arch-note').textContent = a.comment || ''; n.querySelector('.arch-restore').onclick = () => restoreFromArchive(a.id); lB.appendChild(n); });
 }
-async function restoreFromArchive(id) { const i = state.archive.find(a => a.id === id); if (!i) return; if (!window.confirm('Восстановить?')) return; const op = { id: i.id, type: i.type, amount: i.amount, accountId: i.accountId, categoryId: i.categoryId, date: i.date || '', comment: i.comment || '', isPlanned: i.isPlanned || false, excludeFromBalance: false, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], manualSum: false, createdAt: i.archivedAt || Date.now(), updatedAt: Date.now() }; await dbPut('operations', op); await dbDelete('archive', i.id); state.operations.push(op); state.archive = state.archive.filter(a => a.id !== i.id); renderDashboard(); renderOperations(); renderArchive(); }
-async function exportArchiveJSON() { const y = [...new Set(state.archive.map(a => a.archiveYear))].sort((a, b) => b - a); if (!y.length) return alert('Пусто'); const i = prompt(`За какой год? (${y.join(', ')})`, ''); if (i === null) return; let it, f; if (i.trim() === '') { it = state.archive; f = 'archive-all.json'; } else { const yr = parseInt(i); if (isNaN(yr)) return; it = state.archive.filter(a => a.archiveYear === yr); if (!it.length) return alert('Нет данных'); f = 'archive-' + yr + '.json'; } const d = { version: 1, exportedAt: Date.now(), items: it }; const b = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' }); const u = URL.createObjectURL(b); const l = document.createElement('a'); l.href = u; l.download = f; l.click(); URL.revokeObjectURL(u); if (window.confirm('Экспорт выполнен. Удалить из архива?')) { for (const itm of it) await dbDelete('archive', itm.id); state.archive = state.archive.filter(a => !it.find(x => x.id === a.id)); renderArchive(); } }
-async function importArchiveJSON(file) { try { const t = await file.text(); const d = JSON.parse(t); const it = Array.isArray(d) ? d : (d.items || []); if (!it.length) return alert('Нет записей'); if (!window.confirm(`Импортировать ${it.length} записей?`)) return; for (const i of it) { const itm = { id: i.id || uid('arch'), type: i.type || 'expense', amount: Number(i.amount) || 0, accountId: i.accountId || '', accountName: i.accountName || '—', categoryId: i.categoryId || '', categoryName: i.categoryName || 'Без кат.', date: i.date || '', comment: i.comment || '', isPlanned: !!i.isPlanned, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], archiveYear: i.archiveYear || new Date().getFullYear(), archivedAt: i.archivedAt || Date.now(), fromAuto: false }; await dbPut('archive', itm); } state.archive = await dbGetAll('archive'); renderArchive(); alert('Импорт завершён'); } catch (e) { alert('Ошибка: ' + e.message); } }
+async function restoreFromArchive(id) { const i = state.archive.find(a => a.id === id); if (!i) return; showConfirm('Восстановить запись из архива?', async () => { const op = { id: i.id, type: i.type, amount: i.amount, accountId: i.accountId, categoryId: i.categoryId, date: i.date || '', comment: i.comment || '', isPlanned: i.isPlanned || false, excludeFromBalance: false, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], manualSum: false, createdAt: i.archivedAt || Date.now(), updatedAt: Date.now() }; await dbPut('operations', op); await dbDelete('archive', i.id); state.operations.push(op); state.archive = state.archive.filter(a => a.id !== i.id); renderDashboard(); renderOperations(); renderArchive(); }); }
+async function exportArchiveJSON() {
+  const y = [...new Set(state.archive.map(a => a.archiveYear))].sort((a, b) => b - a); if (!y.length) { showAlert('Архив пуст'); return; }
+  showPrompt(`За какой год? (${y.join(', ')}, пусто — всё)`, '', (i) => {
+    let it, f;
+    if (!i || i.trim() === '') { it = state.archive; f = 'archive-all.json'; }
+    else { const yr = parseInt(i); if (isNaN(yr)) { showAlert('Неверный год'); return; } it = state.archive.filter(a => a.archiveYear === yr); if (!it.length) { showAlert('Нет данных'); return; } f = 'archive-' + yr + '.json'; }
+    const d = { version: 1, exportedAt: Date.now(), items: it }; const b = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' }); const u = URL.createObjectURL(b); const l = document.createElement('a'); l.href = u; l.download = f; l.click(); URL.revokeObjectURL(u);
+    showConfirm('Экспорт выполнен. Удалить экспортированные записи из архива?', async () => { for (const itm of it) await dbDelete('archive', itm.id); state.archive = state.archive.filter(a => !it.find(x => x.id === a.id)); renderArchive(); });
+  });
+}
+async function importArchiveJSON(file) {
+  try {
+    const t = await file.text(); const d = JSON.parse(t); const it = Array.isArray(d) ? d : (d.items || []);
+    if (!it.length) { showAlert('Нет записей'); return; }
+    showConfirm(`Импортировать ${it.length} записей?`, async () => {
+      for (const i of it) { const itm = { id: i.id || uid('arch'), type: i.type || 'expense', amount: round2(Number(i.amount)), accountId: i.accountId || '', accountName: i.accountName || '—', categoryId: i.categoryId || '', categoryName: i.categoryName || 'Без кат.', date: i.date || '', comment: i.comment || '', isPlanned: !!i.isPlanned, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], archiveYear: i.archiveYear || new Date().getFullYear(), archivedAt: i.archivedAt || Date.now(), fromAuto: false }; await dbPut('archive', itm); }
+      state.archive = await dbGetAll('archive'); renderArchive(); showAlert('Импорт завершён');
+    });
+  } catch (e) { showAlert('Ошибка: ' + e.message); }
+}
 
 function downloadBlob(c, f, m) { const b = new Blob([c], { type: m }); const u = URL.createObjectURL(b); const l = document.createElement('a'); l.href = u; l.download = f; l.click(); setTimeout(() => URL.revokeObjectURL(u), 1000); }
 async function exportJSON() { const d = { version: 1, exportedAt: Date.now(), accounts: state.accounts, categories: state.categories, operations: state.operations, debts: state.debts, templates: state.templates, archive: state.archive }; downloadBlob(JSON.stringify(d, null, 2), 'finance-backup-' + todayISO() + '.json', 'application/json'); alert('JSON сохранён'); }
@@ -591,6 +656,21 @@ function showAlert(message) {
     } else { resolve(); }
     openModal('modal-confirm');
   });
+}
+// In-app аналог window.prompt (в мобильных браузерах и PWA window.prompt может молча блокироваться)
+function showPrompt(message, defaultValue, onOk) {
+  const text = document.getElementById('modal-prompt-text');
+  const input = document.getElementById('modal-prompt-input');
+  if (!text || !input) { const v = window.prompt(message, defaultValue); if (v !== null && onOk) onOk(v); return; }
+  text.textContent = message;
+  input.value = defaultValue || '';
+  const ok = document.getElementById('modal-prompt-ok');
+  const cancel = document.getElementById('modal-prompt-cancel');
+  const close = () => closeModal('modal-prompt');
+  if (ok) ok.onclick = () => { close(); if (onOk) onOk(input.value); };
+  if (cancel) cancel.onclick = close;
+  openModal('modal-prompt');
+  setTimeout(() => { try { input.focus(); } catch (e) {} }, 80);
 }
 
 async function applyReplaceImport(data) {
@@ -692,14 +772,14 @@ async function importJSON(file) {
     // Показываем окно выбора режима ДО любых изменений базы: «Заменить все данные» / «Обновить данные»
     openImportChoiceModal(data);
   } catch (err) {
-    alert('Ошибка чтения файла: ' + err.message);
+    showAlert('Ошибка чтения файла: ' + err.message);
   }
 }
 function csvEscape(v) { const s = String(v == null ? '' : v); return s.includes(';') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; }
 async function exportCSV() { const r = [['Дата', 'Тип', 'Сумма', 'Счёт', 'Категория', 'Плановое', 'Не в балансе', 'Долг', 'Комментарий'].join(';')]; const s = [...state.operations].sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return ka - kb; }); s.forEach(o => { const a = state.accounts.find(x => x.id === o.accountId); const c = state.categories.find(x => x.id === o.categoryId); const d = state.debts.find(x => x.id === o.linkedDebtId); r.push([o.date || '', o.type === 'income' ? 'Доход' : 'Расход', Number(o.amount).toFixed(2), a ? a.name : '', c ? c.name : '', o.isPlanned ? 'да' : 'нет', o.excludeFromBalance ? 'да' : 'нет', d ? d.name : '', o.comment || ''].map(csvEscape).join(';')); }); downloadBlob('\uFEFF' + r.join('\r\n'), 'finance-' + todayISO() + '.csv', 'text/csv;charset=utf-8'); alert('CSV сохранён'); }
-async function importCSV(file) { try { const t = await file.text(); const l = t.replace(/^\uFEFF/, '').split(/\r?\n/).filter(x => x.trim()); if (l.length < 2) throw new Error('Пустой файл'); const h = l[0].split(';').map(x => x.replace(/^"|"$/g, '').trim().toLowerCase()); const ix = n => h.indexOf(n); const iD = ix('дата'), iT = ix('тип'), iA = ix('сумма'), iAc = ix('счёт'), iC = ix('категория'), iP = ix('плановое'), iE = ix('не в балансе'), iDbt = ix('долг'), iCm = ix('комментарий'); if (iT < 0 || iA < 0) throw new Error('Нет колонок'); if (!window.confirm('Импортировать CSV?')) return; const sl = line => { const r = []; let c = '', i = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { if (i && line[j + 1] === '"') { c += '"'; j++; } else i = !i; } else if (ch === ';' && !i) { r.push(c); c = ''; } else c += ch; } r.push(c); return r; }; let add = 0; for (let j = 1; j < l.length; j++) { const c = sl(l[j]); const tr = (c[iT] || '').toLowerCase(); const ty = tr.startsWith('дох') ? 'income' : 'expense'; const am = parseFloat((c[iA] || '0').replace(',', '.')) || 0; if (!am) continue; let ac = state.accounts.find(x => x.name === (c[iAc] || '').trim()); if (!ac && state.accounts.length) ac = state.accounts[0]; let ct = state.categories.find(x => x.name === (c[iC] || '').trim() && x.type === ty); if (!ct && c[iC]) { ct = { id: uid('cat'), type: ty, name: c[iC].trim(), createdAt: Date.now() }; await dbPut('categories', ct); state.categories.push(ct); } const dbt = c[iDbt] ? state.debts.find(x => x.name === c[iDbt].trim()) : null; const op = { id: uid('op'), type: ty, amount: am, accountId: ac ? ac.id : '', categoryId: ct ? ct.id : '', date: (c[iD] || '').trim(), comment: (c[iCm] || '').trim(), isPlanned: iP >= 0 && /^(да|yes|1)$/i.test((c[iP] || '').trim()), excludeFromBalance: iE >= 0 && /^(да|yes|1)$/i.test((c[iE] || '').trim()), linkedDebtId: dbt ? dbt.id : '', nested: [], manualSum: false, createdAt: Date.now(), updatedAt: Date.now() }; await dbPut('operations', op); state.operations.push(op); add++; } renderDashboard(); renderOperations(); renderCategories(); alert('Импортировано: ' + add); } catch (e) { alert('Ошибка: ' + e.message); } }
+async function importCSV(file) { try { const t = await file.text(); const l = t.replace(/^\uFEFF/, '').split(/\r?\n/).filter(x => x.trim()); if (l.length < 2) throw new Error('Пустой файл'); const h = l[0].split(';').map(x => x.replace(/^"|"$/g, '').trim().toLowerCase()); const ix = n => h.indexOf(n); const iD = ix('дата'), iT = ix('тип'), iA = ix('сумма'), iAc = ix('счёт'), iC = ix('категория'), iP = ix('плановое'), iE = ix('не в балансе'), iDbt = ix('долг'), iCm = ix('комментарий'); if (iT < 0 || iA < 0) throw new Error('Нет колонок'); const doImport = async () => { try { const sl = line => { const r = []; let c = '', i = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { if (i && line[j + 1] === '"') { c += '"'; j++; } else i = !i; } else if (ch === ';' && !i) { r.push(c); c = ''; } else c += ch; } r.push(c); return r; }; let add = 0; for (let j = 1; j < l.length; j++) { const c = sl(l[j]); const tr = (c[iT] || '').toLowerCase(); const ty = tr.startsWith('дох') ? 'income' : 'expense'; const am = parseFloat((c[iA] || '0').replace(',', '.')) || 0; if (!am) continue; let ac = state.accounts.find(x => x.name === (c[iAc] || '').trim()); if (!ac && state.accounts.length) ac = state.accounts[0]; let ct = state.categories.find(x => x.name === (c[iC] || '').trim() && x.type === ty); if (!ct && c[iC]) { ct = { id: uid('cat'), type: ty, name: c[iC].trim(), createdAt: Date.now() }; await dbPut('categories', ct); state.categories.push(ct); } const dbt = c[iDbt] ? state.debts.find(x => x.name === c[iDbt].trim()) : null; const op = { id: uid('op'), type: ty, amount: am, accountId: ac ? ac.id : '', categoryId: ct ? ct.id : '', date: (c[iD] || '').trim(), comment: (c[iCm] || '').trim(), isPlanned: iP >= 0 && /^(да|yes|1)$/i.test((c[iP] || '').trim()), excludeFromBalance: iE >= 0 && /^(да|yes|1)$/i.test((c[iE] || '').trim()), linkedDebtId: dbt ? dbt.id : '', nested: [], manualSum: false, createdAt: Date.now(), updatedAt: Date.now() }; await dbPut('operations', op); state.operations.push(op); add++; } renderDashboard(); renderOperations(); renderCategories(); showAlert('Импортировано: ' + add); } catch (e) { showAlert('Ошибка: ' + e.message); } }; showConfirm('Импортировать CSV?', doImport); } catch (e) { showAlert('Ошибка: ' + e.message); } }
 async function exportTXT() { const l = ['Мои финансы', 'Сформирован: ' + new Date().toLocaleString('ru-RU'), 'Операций: ' + state.operations.length]; const tI = state.operations.filter(o => !o.isPlanned && o.type === 'income').reduce((s, o) => s + o.amount, 0); const tE = state.operations.filter(o => !o.isPlanned && o.type === 'expense').reduce((s, o) => s + o.amount, 0); l.push('Доходы: ' + formatMoney(tI), 'Расходы: ' + formatMoney(tE), 'Баланс: ' + formatMoney(tI - tE), '---'); const s = [...state.operations].sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return kb - ka; }); s.forEach(o => { const a = state.accounts.find(x => x.id === o.accountId); const c = state.categories.find(x => x.id === o.categoryId); const d = state.debts.find(x => x.id === o.linkedDebtId); let x = (o.date || 'без даты') + ' | ' + (o.type === 'income' ? '+' : '−') + formatMoney(o.amount) + ' | ' + (c ? c.name : '') + ' | ' + (a ? a.name : '') + (o.isPlanned ? ' | ПЛАН' : ''); if (d) x += ' | долг: ' + d.name; if (o.comment) x += ' | ' + o.comment; l.push(x); }); downloadBlob(l.join('\r\n'), 'finance-' + todayISO() + '.txt', 'text/plain;charset=utf-8'); alert('TXT сохранён'); }
-async function exportPDF() { const w = window.open('', '_blank'); if (!w) return alert('Разрешите окна'); const tI = state.operations.filter(o => !o.isPlanned && o.type === 'income').reduce((s, o) => s + o.amount, 0); const tE = state.operations.filter(o => !o.isPlanned && o.type === 'expense').reduce((s, o) => s + o.amount, 0); const rH = [...state.operations].sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return kb - ka; }).map(o => { const a = state.accounts.find(x => x.id === o.accountId); const c = state.categories.find(x => x.id === o.categoryId); const cl = o.type === 'income' ? '#1E563E' : '#C94C4C'; return `<tr><td>${escapeHtml(o.date || '')}</td><td>${escapeHtml(c ? c.name : '')}</td><td>${escapeHtml(a ? a.name : '')}</td><td style="color:${cl};text-align:right;">${o.type === 'income' ? '+' : '−'}${formatMoney(o.amount)} ₽</td><td>${escapeHtml(o.comment || '')}${o.isPlanned ? ' (план)' : ''}</td></tr>`; }).join(''); const h = `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Отчёт</title><style>body{font-family:Arial;padding:20px;}table{width:100%;border-collapse:collapse;font-size:13px;}th,td{border:1px solid #ccc;padding:6px;text-align:left;}th{background:#f0f0f0;} .sum{margin:12px 0;padding:10px;background:#f8f8f8;} @media print{.no-print{display:none;}}</style></head><body><h1>Мои финансы</h1><div class="sum"><div>Сформирован: ${new Date().toLocaleString('ru-RU')}</div><div>Доходы: <b style="color:#1E563E;">${formatMoney(tI)} ₽</b></div><div>Расходы: <b style="color:#C94C4C;">${formatMoney(tE)} ₽</b></div><div>Баланс: <b>${formatMoney(tI - tE)} ₽</b></div></div><table><thead><tr><th>Дата</th><th>Категория</th><th>Счёт</th><th>Сумма</th><th>Комментарий</th></tr></thead><tbody>${rH}</tbody></table><p class="no-print" style="margin-top:20px;"><button onclick="window.print()">Печать / PDF</button></p></body></html>`; w.document.write(h); w.document.close(); }
+async function exportPDF() { const w = window.open('', '_blank'); if (!w) { showAlert('Разрешите всплывающие окна для браузера, чтобы открыть отчёт.'); return; } const tI = state.operations.filter(o => !o.isPlanned && o.type === 'income').reduce((s, o) => s + o.amount, 0); const tE = state.operations.filter(o => !o.isPlanned && o.type === 'expense').reduce((s, o) => s + o.amount, 0); const rH = [...state.operations].sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return kb - ka; }).map(o => { const a = state.accounts.find(x => x.id === o.accountId); const c = state.categories.find(x => x.id === o.categoryId); const cl = o.type === 'income' ? '#1E563E' : '#C94C4C'; return `<tr><td>${escapeHtml(o.date || '')}</td><td>${escapeHtml(c ? c.name : '')}</td><td>${escapeHtml(a ? a.name : '')}</td><td style="color:${cl};text-align:right;">${o.type === 'income' ? '+' : '−'}${formatMoney(o.amount)} ₽</td><td>${escapeHtml(o.comment || '')}${o.isPlanned ? ' (план)' : ''}</td></tr>`; }).join(''); const h = `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Отчёт</title><style>body{font-family:Arial;padding:20px;}table{width:100%;border-collapse:collapse;font-size:13px;}th,td{border:1px solid #ccc;padding:6px;text-align:left;}th{background:#f0f0f0;} .sum{margin:12px 0;padding:10px;background:#f8f8f8;} @media print{.no-print{display:none;}}</style></head><body><h1>Мои финансы</h1><div class="sum"><div>Сформирован: ${new Date().toLocaleString('ru-RU')}</div><div>Доходы: <b style="color:#1E563E;">${formatMoney(tI)} ₽</b></div><div>Расходы: <b style="color:#C94C4C;">${formatMoney(tE)} ₽</b></div><div>Баланс: <b>${formatMoney(tI - tE)} ₽</b></div></div><table><thead><tr><th>Дата</th><th>Категория</th><th>Счёт</th><th>Сумма</th><th>Комментарий</th></tr></thead><tbody>${rH}</tbody></table><p class="no-print" style="margin-top:20px;"><button onclick="window.print()">Печать / PDF</button></p></body></html>`; w.document.write(h); w.document.close(); }
 async function updateStorageInfo() { const i = document.getElementById('storage-info'); const f = document.getElementById('storage-bar-fill'); if (!i) return; try { const e = await navigator.storage.estimate(); const u = e.usage || 0; const q = e.quota || 0; const p = q ? Math.min(100, (u / q) * 100) : 0; i.textContent = 'Занято: ' + formatBytes(u) + ' из ' + formatBytes(q) + ' (' + p.toFixed(2) + '%)'; if (f) f.style.width = p + '%'; } catch (e) { i.textContent = 'Ошибка'; } }
 function formatBytes(b) { if (!b) return '0 Б'; const u = ['Б', 'КБ', 'МБ', 'ГБ']; let i = 0, n = b; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return n.toFixed(2) + ' ' + u[i]; }
 async function requestPersistentStorage() { if (!navigator.storage || !navigator.storage.persist) return alert('Не поддерживается'); const g = await navigator.storage.persist(); alert(g ? 'Разрешено' : 'Запрещено'); updateStorageInfo(); }
@@ -738,11 +818,19 @@ function setupDebtForm() {
   document.getElementById('debt-is-credit').onchange = (e) => { document.getElementById('credit-block').classList.toggle('hidden', !e.target.checked); };
   ['debt-amount', 'debt-term', 'debt-rate'].forEach(id => document.getElementById(id).oninput = () => { if (document.getElementById('debt-is-credit').checked) calcCreditTotal(); });
   document.getElementById('debt-date-clear').onclick = () => document.getElementById('debt-due-date').value = '';
+  document.getElementById('btn-delete-debt').onclick = () => {
+    const id = document.getElementById('debt-id').value; if (!id) return;
+    showConfirm('Удалить этот долг?', () => { closeModal('modal-debt'); performDeleteDebt(id); });
+  };
 }
 function setupOperationForm() {
   document.getElementById('op-type').onchange = () => fillCategorySelect();
   document.getElementById('op-is-planned').onchange = (e) => { if (e.target.checked) document.getElementById('op-exclude-balance').checked = true; };
   document.getElementById('op-date-clear').onclick = () => document.getElementById('op-date').value = '';
+  document.getElementById('btn-delete-operation').onclick = () => {
+    const id = document.getElementById('operation-id').value; if (!id) return;
+    showConfirm('Удалить эту запись?', () => { closeModal('modal-operation'); performDeleteOperation(id); });
+  };
   document.getElementById('btn-add-nested-field').onclick = () => { if (isManualSum()) { showManualIndicator(false); disableNestedInputs(false); } addNestedField(); };
   document.getElementById('btn-recalc').onclick = () => { showManualIndicator(false); disableNestedInputs(false); recalcNestedTotal(); };
   document.getElementById('op-amount').oninput = () => { const n = $$('#nested-fields-list .nested-field-row').length > 0; if (n) { showManualIndicator(true); disableNestedInputs(true); } };
@@ -773,7 +861,9 @@ async function init() {
   await loadAccounts(); await loadCategories(); await loadTemplates(); await loadOperations(); await loadDebts(); await loadArchive();
   setupNavigation(); setupModals(); setupModalXButtons(); setupOverlayClose(); setupFormDirtyTracking(); setupTheme(); setupSettingsButtons(); setupDebtForm(); setupOperationForm(); setupDashboardPeriod(); setupHistoryFilters(); setupReports(); setupArchive(); setupImportChoiceModal();
   switchScreen('dashboard');
-  await autoArchiveOldOperations(); showArchiveNotificationIfNeeded();
+  // Тихая авто-архивация отключена: абсолютно все записи остаются в истории,
+  // пока вы сами не отправите их в архив. Напоминание при этом показывается.
+  showArchiveNotificationIfNeeded();
 }
 
 document.addEventListener('submit', (e) => { e.preventDefault(); }, true);

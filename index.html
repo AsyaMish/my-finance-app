@@ -242,7 +242,7 @@
       <form id="operation-form" onsubmit="return false;">
         <input type="hidden" id="operation-id">
         <label>Тип <select id="op-type"><option value="expense">Расход</option><option value="income">Доход</option></select></label>
-        <label>Сумма (₽) <input type="number" id="op-amount" step="0.01" inputmode="decimal"></label>
+        <label>Сумма (₽) <input type="text" id="op-amount" inputmode="decimal" autocomplete="off" placeholder="0,00"></label>
         <label>Счёт <select id="op-account"></select></label>
         <label>Категория <select id="op-category"></select></label>
         <div class="form-field"><label>Дата</label><div class="date-field"><input type="date" id="op-date"><button type="button" id="op-date-clear" class="btn-clear">×</button></div></div>
@@ -258,7 +258,7 @@
           <div id="manual-sum-indicator" class="manual-indicator hidden"><span>Введено вручную</span><button type="button" id="btn-recalc" class="btn-small">Сброс</button></div>
         </div>
         <label>Шаблон <select id="op-template"></select></label>
-        <div class="form-buttons"><button type="submit" class="btn-primary">Сохранить</button><button type="button" id="btn-cancel-operation" class="btn-secondary">Отмена</button></div>
+        <div class="form-buttons"><button type="button" id="btn-delete-operation" class="btn-danger hidden">🗑 Удалить</button><button type="submit" class="btn-primary">Сохранить</button><button type="button" id="btn-cancel-operation" class="btn-secondary">Отмена</button></div>
       </form>
     </div>
   </div>
@@ -269,7 +269,7 @@
         <input type="hidden" id="debt-id">
         <label>Направление <select id="debt-direction"><option value="i-owe">Я должна</option><option value="owed-to-me">Мне должны</option></select></label>
         <label>Название <input type="text" id="debt-name"></label>
-        <label>Сумма <input type="number" id="debt-amount" step="0.01" inputmode="decimal"></label>
+        <label>Сумма <input type="text" id="debt-amount" inputmode="decimal" autocomplete="off" placeholder="0,00"></label>
         <div class="checkbox-group">
           <label class="checkbox-label"><input type="checkbox" id="debt-is-planned"> Планируемая</label>
           <label class="checkbox-label"><input type="checkbox" id="debt-is-credit"> Это кредит</label>
@@ -277,11 +277,11 @@
         <div id="credit-block" class="credit-block hidden">
           <label>Срок (мес) <input type="number" id="debt-term"></label>
           <label>Ставка (%) <input type="number" id="debt-rate"></label>
-          <label>Итоговая сумма <input type="number" id="debt-total"></label>
+          <label>Итоговая сумма <input type="text" id="debt-total" inputmode="decimal" autocomplete="off"></label>
         </div>
         <div class="form-field"><label>Дата возврата</label><div class="date-field"><input type="date" id="debt-due-date"><button type="button" id="debt-date-clear" class="btn-clear">×</button></div></div>
         <label>Комментарий <textarea id="debt-comment" rows="2"></textarea></label>
-        <div class="form-buttons"><button type="submit" class="btn-primary">Сохранить</button><button type="button" id="btn-cancel-debt" class="btn-secondary">Отмена</button></div>
+        <div class="form-buttons"><button type="button" id="btn-delete-debt" class="btn-danger hidden">🗑 Удалить</button><button type="submit" class="btn-primary">Сохранить</button><button type="button" id="btn-cancel-debt" class="btn-secondary">Отмена</button></div>
       </form>
     </div>
   </div>
@@ -304,6 +304,14 @@
   <div id="modal-confirm" class="modal hidden">
     <div class="modal-content"><button class="modal-x">×</button><p id="modal-confirm-text"></p>
       <div class="modal-buttons"><button id="modal-confirm-yes" class="btn-danger">Да</button><button id="modal-confirm-no" class="btn-secondary">Отмена</button></div>
+    </div>
+  </div>
+
+  <!-- ===== МОДАЛКА: ВВОД ТЕКСТА (вместо window.prompt, который блокируется на телефонах) ===== -->
+  <div id="modal-prompt" class="modal hidden">
+    <div class="modal-content"><button class="modal-x">×</button><p id="modal-prompt-text"></p>
+      <input type="text" id="modal-prompt-input">
+      <div class="modal-buttons"><button id="modal-prompt-ok" class="btn-primary">ОК</button><button id="modal-prompt-cancel" class="btn-secondary">Отмена</button></div>
     </div>
   </div>
 
@@ -333,7 +341,7 @@
       <input type="checkbox" class="op-select">
       <div class="op-main" style="cursor: pointer;">
         <div class="op-row"><span class="op-amount"></span><span class="op-category"></span></div>
-        <div class="op-row op-secondary"><span class="op-account"></span><span class="op-date"></span><span class="op-badge op-badge-plan hidden">План</span></div>
+        <div class="op-row op-secondary"><span class="op-account"></span><span class="op-date"></span><span class="op-badge op-badge-plan hidden">План</span><span class="op-badge op-badge-nobalance hidden">Не в баланс</span><span class="op-badge op-badge-debt hidden">Долг</span></div>
         <div class="op-comment"></div>
       </div>
       <div class="op-actions">
