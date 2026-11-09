@@ -10,19 +10,22 @@ const DEFAULT_ACCOUNTS = [
 ];
 
 const DEFAULT_INCOME_CATEGORIES = [
-  { id: 'cat_inc_salary', type: 'income', name: 'Зарплата', createdAt: Date.now() },
-  { id: 'cat_inc_extra', type: 'income', name: 'Подработка', createdAt: Date.now() },
-  { id: 'cat_inc_gift', type: 'income', name: 'Подарки', createdAt: Date.now() },
-  { id: 'cat_inc_other', type: 'income', name: 'Прочее', createdAt: Date.now() },
+  { id: 'cat_inc_extra', type: 'income', name: 'Фриланс', order: 1, createdAt: Date.now() },
+  { id: 'cat_inc_gift', type: 'income', name: 'Подарки', order: 2, createdAt: Date.now() },
+  { id: 'cat_inc_other', type: 'income', name: 'Прочее', order: 3, createdAt: Date.now() },
+  { id: 'cat_inc_salary', type: 'income', name: 'Зарплата', order: 4, createdAt: Date.now() },
+  { id: 'cat_inc_kid', type: 'income', name: 'Детсад', order: 5, createdAt: Date.now() },
 ];
 
 const DEFAULT_EXPENSE_CATEGORIES = [
-  { id: 'cat_exp_food', type: 'expense', name: 'Продукты', createdAt: Date.now() },
-  { id: 'cat_exp_transport', type: 'expense', name: 'Транспорт', createdAt: Date.now() },
-  { id: 'cat_exp_utilities', type: 'expense', name: 'Коммуналка', createdAt: Date.now() },
-  { id: 'cat_exp_health', type: 'expense', name: 'Здоровье', createdAt: Date.now() },
-  { id: 'cat_exp_fun', type: 'expense', name: 'Развлечения', createdAt: Date.now() },
-  { id: 'cat_exp_other', type: 'expense', name: 'Прочее', createdAt: Date.now() },
+  { id: 'cat_exp_food', type: 'expense', name: 'Продукты', order: 1, createdAt: Date.now() },
+  { id: 'cat_exp_kids', type: 'expense', name: 'Детсад', order: 2, createdAt: Date.now() },
+  { id: 'cat_exp_health', type: 'expense', name: 'Здоровье', order: 3, createdAt: Date.now() },
+  { id: 'cat_exp_other', type: 'expense', name: 'Прочее', order: 4, createdAt: Date.now() },
+  { id: 'cat_exp_utilities', type: 'expense', name: 'Коммуналка', order: 5, createdAt: Date.now() },
+  { id: 'cat_exp_internet', type: 'expense', name: 'Интернет', order: 6, createdAt: Date.now() },
+  { id: 'cat_exp_household', type: 'expense', name: 'Хозтовары', order: 7, createdAt: Date.now() },
+  { id: 'cat_exp_subscriptions', type: 'expense', name: 'Подписки', order: 8, createdAt: Date.now() },
 ];
 
 const DEFAULT_TEMPLATES = [{
@@ -34,6 +37,7 @@ const DEFAULT_TEMPLATES = [{
 const state = {
   db: null, accounts: [], categories: [], operations: [], debts: [], templates: [], archive: [],
   currentScreen: 'dashboard', settings: { theme: 'system' }, dashboardPeriod: 'week', selectedOperations: new Set(),
+  historySort: (() => { try { return localStorage.getItem('historySort') === 'asc' ? 'asc' : 'desc'; } catch (e) { return 'desc'; } })(),
 };
 
 function uid(prefix = 'id') { return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -110,6 +114,43 @@ async function editAccount(id) { const a = state.accounts.find(x => x.id === id)
 async function deleteAccount(id) { if (state.accounts.length <= 1) { showAlert('Последний счёт нельзя удалить.'); return; } const a = state.accounts.find(x => x.id === id); if (!a) return; const ops = state.operations.filter(o => o.accountId === id); const doDelete = async () => { for (const o of ops) await dbDelete('operations', o.id); state.operations = state.operations.filter(o => o.accountId !== id); await dbDelete('accounts', id); state.accounts = state.accounts.filter(x => x.id !== id); renderAccounts(); renderOperations(); }; showConfirm(ops.length ? 'Удалить счёт и все его операции?' : 'Удалить счёт?', doDelete); }
 
 async function loadCategories() { state.categories = await dbGetAll('categories'); if (!state.categories.length) { const s = [...DEFAULT_INCOME_CATEGORIES, ...DEFAULT_EXPENSE_CATEGORIES]; for (const c of s) await dbPut('categories', c); state.categories = [...s]; } }
+
+// === Категории по умолчанию (списки по скринам): одноразовая миграция существующих баз ===
+const CATS_MIGRATION_KEY = 'defaults_categories_v2';
+async function migrateDefaultCategories() {
+  let done = null;
+  try { done = localStorage.getItem(CATS_MIGRATION_KEY); } catch (e) { return; }
+  if (done) return;
+  try { localStorage.setItem(CATS_MIGRATION_KEY, '1'); } catch (e) {}
+  if (!state.categories.length) return; // пустая база — засеются новые дефолты
+  const norm = s => String(s || '').trim().toLowerCase();
+  // 1) «Подработка» -> «Фриланс» (доходы)
+  for (const c of state.categories) {
+    if (c.type === 'income' && norm(c.name) === 'подработка') { c.name = 'Фриланс'; await dbPut('categories', c); }
+  }
+  // 2) Добавляем недостающие категории и задаём порядок как на экране
+  const defs = [...DEFAULT_INCOME_CATEGORIES, ...DEFAULT_EXPENSE_CATEGORIES];
+  for (const d of defs) {
+    const ex = state.categories.find(c => c.type === d.type && norm(c.name) === norm(d.name));
+    if (!ex) { const nc = { id: d.id, type: d.type, name: d.name, order: d.order, createdAt: Date.now() }; await dbPut('categories', nc); state.categories.push(nc); }
+    else if ((ex.order || 0) !== d.order) { ex.order = d.order; await dbPut('categories', ex); }
+  }
+  // 3) «Развлечения» убираем; их операции переезжают в «Прочее» (расходы)
+  const fun = state.categories.find(c => c.type === 'expense' && norm(c.name) === 'развлечения');
+  if (fun) {
+    const other = state.categories.find(c => c.type === 'expense' && norm(c.name) === 'прочее' && c.id !== fun.id);
+    const linked = state.operations.filter(o => o.categoryId === fun.id);
+    for (const o of linked) { o.categoryId = other ? other.id : ''; o.updatedAt = Date.now(); await dbPut('operations', o); }
+    await dbDelete('categories', fun.id);
+    state.categories = state.categories.filter(c => c.id !== fun.id);
+  }
+  // 4) Неиспользуемый «Транспорт» убираем (если операции есть — категорию оставляем)
+  const tr = state.categories.find(c => c.type === 'expense' && norm(c.name) === 'транспорт');
+  if (tr && !state.operations.some(o => o.categoryId === tr.id)) {
+    await dbDelete('categories', tr.id);
+    state.categories = state.categories.filter(c => c.id !== tr.id);
+  }
+}
 function renderCategories() {
   const iL = document.getElementById('income-categories-list'), eL = document.getElementById('expense-categories-list');
   if (!iL || !eL) return; iL.innerHTML = ''; eL.innerHTML = '';
@@ -420,13 +461,16 @@ function getFilteredOperations() {
   if (sumFrom !== '') ops = ops.filter(o => o.amount >= parseNumber(sumFrom));
   if (sumTo !== '') ops = ops.filter(o => o.amount <= parseNumber(sumTo));
 
-  // === Сортировка: свежая дата сверху; внутри одного дня — в порядке появления в системе (свежая запись — самой верхней строкой) ===
+  // === Сортировка: по иконке сортировки в шапке истории. По умолчанию «Сначала новые»:
+  // свежая дата сверху, внутри одного дня — в порядке появления в системе (свежая запись — самой верхней строкой).
+  // В режиме «Сначала старые» порядок полностью обратный.
+  const sortDir = state.historySort === 'asc' ? -1 : 1; // desc (+1): новые сверху
   ops.sort((a, b) => {
     const ka = opDateKey(a), kb = opDateKey(b);
-    if (kb !== ka) return kb - ka;
+    if (kb !== ka) return (kb - ka) * sortDir;
     const ca = a.createdAt || 0, cb = b.createdAt || 0;
-    if (cb !== ca) return cb - ca;
-    return (b.updatedAt || 0) - (a.updatedAt || 0);
+    if (cb !== ca) return (cb - ca) * sortDir;
+    return ((b.updatedAt || 0) - (a.updatedAt || 0)) * sortDir;
   });
   return ops;
 }
@@ -533,7 +577,7 @@ async function loadArchive() { state.archive = await dbGetAll('archive'); }
 function isOlderThanOneYear(dateISO) { if (!dateISO) return false; const d = new Date(dateISO); const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1); return d < cutoff; }
 function isCreatedOlderThanOneYear(createdAt) { return createdAt && createdAt < Date.now() - 365 * 24 * 60 * 60 * 1000; }
 function operationToArchiveItem(op, year, fromAuto = false) {
-  return { id: op.id, type: op.type, amount: op.amount, accountId: op.accountId, accountName: (state.accounts.find(a => a.id === op.accountId) || {}).name || '—', categoryId: op.categoryId, categoryName: (state.categories.find(c => c.id === op.categoryId) || {}).name || 'Без кат.', date: op.date || '', comment: op.comment || '', isPlanned: !!op.isPlanned, linkedDebtId: op.linkedDebtId || '', nested: op.nested || [], archiveYear: year, archivedAt: Date.now(), fromAuto };
+  return { id: op.id, type: op.type, amount: op.amount, accountId: op.accountId, accountName: (state.accounts.find(a => a.id === op.accountId) || {}).name || '—', categoryId: op.categoryId, categoryName: (state.categories.find(c => c.id === op.categoryId) || {}).name || 'Без кат.', date: op.date || '', comment: op.comment || '', isPlanned: !!op.isPlanned, excludeFromBalance: !!op.excludeFromBalance, linkedDebtId: op.linkedDebtId || '', nested: op.nested || [], archiveYear: year, archivedAt: Date.now(), fromAuto };
 }
 function archiveYearForOperation(op) { return op.date ? new Date(op.date).getFullYear() : new Date().getFullYear(); }
 async function archiveOperations(ops, yearByOp) {
@@ -571,7 +615,7 @@ function renderArchive() {
   const items = state.archive.filter(a => a.archiveYear === cur).sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0)); lB.innerHTML = ''; const t = document.getElementById('archive-item-template');
   items.forEach(a => { const n = t.content.firstElementChild.cloneNode(true); const aE = n.querySelector('.arch-amount'); aE.textContent = (a.type === 'income' ? '+' : '−') + formatMoney(a.amount) + ' ₽'; aE.classList.add(a.type === 'income' ? 'income' : 'expense'); n.querySelector('.arch-category').textContent = a.categoryName; n.querySelector('.arch-date').textContent = a.date || 'Без даты'; n.querySelector('.arch-note').textContent = a.comment || ''; n.querySelector('.arch-restore').onclick = () => restoreFromArchive(a.id); lB.appendChild(n); });
 }
-async function restoreFromArchive(id) { const i = state.archive.find(a => a.id === id); if (!i) return; showConfirm('Восстановить запись из архива?', async () => { const op = { id: i.id, type: i.type, amount: i.amount, accountId: i.accountId, categoryId: i.categoryId, date: i.date || '', comment: i.comment || '', isPlanned: i.isPlanned || false, excludeFromBalance: false, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], manualSum: false, createdAt: i.archivedAt || Date.now(), updatedAt: Date.now() }; await dbPut('operations', op); await dbDelete('archive', i.id); state.operations.push(op); state.archive = state.archive.filter(a => a.id !== i.id); renderDashboard(); renderOperations(); renderArchive(); }); }
+async function restoreFromArchive(id) { const i = state.archive.find(a => a.id === id); if (!i) return; showConfirm('Восстановить запись из архива?', async () => { const op = { id: i.id, type: i.type, amount: i.amount, accountId: i.accountId, categoryId: i.categoryId, date: i.date || '', comment: i.comment || '', isPlanned: i.isPlanned || false, excludeFromBalance: !!i.excludeFromBalance, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], manualSum: false, createdAt: i.archivedAt || Date.now(), updatedAt: Date.now() }; await dbPut('operations', op); await dbDelete('archive', i.id); state.operations.push(op); state.archive = state.archive.filter(a => a.id !== i.id); renderDashboard(); renderOperations(); renderArchive(); }); }
 async function exportArchiveJSON() {
   const y = [...new Set(state.archive.map(a => a.archiveYear))].sort((a, b) => b - a); if (!y.length) { showAlert('Архив пуст'); return; }
   showPrompt(`За какой год? (${y.join(', ')}, пусто — всё)`, '', (i) => {
@@ -587,14 +631,14 @@ async function importArchiveJSON(file) {
     const t = await file.text(); const d = JSON.parse(t); const it = Array.isArray(d) ? d : (d.items || []);
     if (!it.length) { showAlert('Нет записей'); return; }
     showConfirm(`Импортировать ${it.length} записей?`, async () => {
-      for (const i of it) { const itm = { id: i.id || uid('arch'), type: i.type || 'expense', amount: round2(Number(i.amount)), accountId: i.accountId || '', accountName: i.accountName || '—', categoryId: i.categoryId || '', categoryName: i.categoryName || 'Без кат.', date: i.date || '', comment: i.comment || '', isPlanned: !!i.isPlanned, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], archiveYear: i.archiveYear || new Date().getFullYear(), archivedAt: i.archivedAt || Date.now(), fromAuto: false }; await dbPut('archive', itm); }
+      for (const i of it) { const itm = { id: i.id || uid('arch'), type: i.type || 'expense', amount: round2(Number(i.amount)), accountId: i.accountId || '', accountName: i.accountName || '—', categoryId: i.categoryId || '', categoryName: i.categoryName || 'Без кат.', date: i.date || '', comment: i.comment || '', isPlanned: !!i.isPlanned, excludeFromBalance: !!i.excludeFromBalance, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], archiveYear: i.archiveYear || new Date().getFullYear(), archivedAt: i.archivedAt || Date.now(), fromAuto: false }; await dbPut('archive', itm); }
       state.archive = await dbGetAll('archive'); renderArchive(); showAlert('Импорт завершён');
     });
   } catch (e) { showAlert('Ошибка: ' + e.message); }
 }
 
 function downloadBlob(c, f, m) { const b = new Blob([c], { type: m }); const u = URL.createObjectURL(b); const l = document.createElement('a'); l.href = u; l.download = f; l.click(); setTimeout(() => URL.revokeObjectURL(u), 1000); }
-async function exportJSON() { const d = { version: 1, exportedAt: Date.now(), accounts: state.accounts, categories: state.categories, operations: state.operations, debts: state.debts, templates: state.templates, archive: state.archive }; downloadBlob(JSON.stringify(d, null, 2), 'finance-backup-' + todayISO() + '.json', 'application/json'); alert('JSON сохранён'); }
+async function exportJSON() { const d = { version: 1, exportedAt: Date.now(), accounts: state.accounts, categories: state.categories, operations: state.operations, debts: state.debts, templates: state.templates, archive: state.archive }; downloadBlob(JSON.stringify(d, null, 2), 'finance-backup-' + todayISO() + '.json', 'application/json'); showAlert('JSON сохранён'); }
 // ===== Импорт JSON: выбор режима («Заменить всё» / «Умное слияние») =====
 function recordTimestamp(item) {
   if (!item || typeof item !== 'object') return 0;
@@ -776,13 +820,170 @@ async function importJSON(file) {
   }
 }
 function csvEscape(v) { const s = String(v == null ? '' : v); return s.includes(';') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; }
-async function exportCSV() { const r = [['Дата', 'Тип', 'Сумма', 'Счёт', 'Категория', 'Плановое', 'Не в балансе', 'Долг', 'Комментарий'].join(';')]; const s = [...state.operations].sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return ka - kb; }); s.forEach(o => { const a = state.accounts.find(x => x.id === o.accountId); const c = state.categories.find(x => x.id === o.categoryId); const d = state.debts.find(x => x.id === o.linkedDebtId); r.push([o.date || '', o.type === 'income' ? 'Доход' : 'Расход', Number(o.amount).toFixed(2), a ? a.name : '', c ? c.name : '', o.isPlanned ? 'да' : 'нет', o.excludeFromBalance ? 'да' : 'нет', d ? d.name : '', o.comment || ''].map(csvEscape).join(';')); }); downloadBlob('\uFEFF' + r.join('\r\n'), 'finance-' + todayISO() + '.csv', 'text/csv;charset=utf-8'); alert('CSV сохранён'); }
-async function importCSV(file) { try { const t = await file.text(); const l = t.replace(/^\uFEFF/, '').split(/\r?\n/).filter(x => x.trim()); if (l.length < 2) throw new Error('Пустой файл'); const h = l[0].split(';').map(x => x.replace(/^"|"$/g, '').trim().toLowerCase()); const ix = n => h.indexOf(n); const iD = ix('дата'), iT = ix('тип'), iA = ix('сумма'), iAc = ix('счёт'), iC = ix('категория'), iP = ix('плановое'), iE = ix('не в балансе'), iDbt = ix('долг'), iCm = ix('комментарий'); if (iT < 0 || iA < 0) throw new Error('Нет колонок'); const doImport = async () => { try { const sl = line => { const r = []; let c = '', i = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { if (i && line[j + 1] === '"') { c += '"'; j++; } else i = !i; } else if (ch === ';' && !i) { r.push(c); c = ''; } else c += ch; } r.push(c); return r; }; let add = 0; for (let j = 1; j < l.length; j++) { const c = sl(l[j]); const tr = (c[iT] || '').toLowerCase(); const ty = tr.startsWith('дох') ? 'income' : 'expense'; const am = parseFloat((c[iA] || '0').replace(',', '.')) || 0; if (!am) continue; let ac = state.accounts.find(x => x.name === (c[iAc] || '').trim()); if (!ac && state.accounts.length) ac = state.accounts[0]; let ct = state.categories.find(x => x.name === (c[iC] || '').trim() && x.type === ty); if (!ct && c[iC]) { ct = { id: uid('cat'), type: ty, name: c[iC].trim(), createdAt: Date.now() }; await dbPut('categories', ct); state.categories.push(ct); } const dbt = c[iDbt] ? state.debts.find(x => x.name === c[iDbt].trim()) : null; const op = { id: uid('op'), type: ty, amount: am, accountId: ac ? ac.id : '', categoryId: ct ? ct.id : '', date: (c[iD] || '').trim(), comment: (c[iCm] || '').trim(), isPlanned: iP >= 0 && /^(да|yes|1)$/i.test((c[iP] || '').trim()), excludeFromBalance: iE >= 0 && /^(да|yes|1)$/i.test((c[iE] || '').trim()), linkedDebtId: dbt ? dbt.id : '', nested: [], manualSum: false, createdAt: Date.now(), updatedAt: Date.now() }; await dbPut('operations', op); state.operations.push(op); add++; } renderDashboard(); renderOperations(); renderCategories(); showAlert('Импортировано: ' + add); } catch (e) { showAlert('Ошибка: ' + e.message); } }; showConfirm('Импортировать CSV?', doImport); } catch (e) { showAlert('Ошибка: ' + e.message); } }
-async function exportTXT() { const l = ['Мои финансы', 'Сформирован: ' + new Date().toLocaleString('ru-RU'), 'Операций: ' + state.operations.length]; const tI = state.operations.filter(o => !o.isPlanned && o.type === 'income').reduce((s, o) => s + o.amount, 0); const tE = state.operations.filter(o => !o.isPlanned && o.type === 'expense').reduce((s, o) => s + o.amount, 0); l.push('Доходы: ' + formatMoney(tI), 'Расходы: ' + formatMoney(tE), 'Баланс: ' + formatMoney(tI - tE), '---'); const s = [...state.operations].sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return kb - ka; }); s.forEach(o => { const a = state.accounts.find(x => x.id === o.accountId); const c = state.categories.find(x => x.id === o.categoryId); const d = state.debts.find(x => x.id === o.linkedDebtId); let x = (o.date || 'без даты') + ' | ' + (o.type === 'income' ? '+' : '−') + formatMoney(o.amount) + ' | ' + (c ? c.name : '') + ' | ' + (a ? a.name : '') + (o.isPlanned ? ' | ПЛАН' : ''); if (d) x += ' | долг: ' + d.name; if (o.comment) x += ' | ' + o.comment; l.push(x); }); downloadBlob(l.join('\r\n'), 'finance-' + todayISO() + '.txt', 'text/plain;charset=utf-8'); alert('TXT сохранён'); }
-async function exportPDF() { const w = window.open('', '_blank'); if (!w) { showAlert('Разрешите всплывающие окна для браузера, чтобы открыть отчёт.'); return; } const tI = state.operations.filter(o => !o.isPlanned && o.type === 'income').reduce((s, o) => s + o.amount, 0); const tE = state.operations.filter(o => !o.isPlanned && o.type === 'expense').reduce((s, o) => s + o.amount, 0); const rH = [...state.operations].sort((a, b) => { const ka = a.date ? new Date(a.date).getTime() : (a.createdAt || 0); const kb = b.date ? new Date(b.date).getTime() : (b.createdAt || 0); return kb - ka; }).map(o => { const a = state.accounts.find(x => x.id === o.accountId); const c = state.categories.find(x => x.id === o.categoryId); const cl = o.type === 'income' ? '#1E563E' : '#C94C4C'; return `<tr><td>${escapeHtml(o.date || '')}</td><td>${escapeHtml(c ? c.name : '')}</td><td>${escapeHtml(a ? a.name : '')}</td><td style="color:${cl};text-align:right;">${o.type === 'income' ? '+' : '−'}${formatMoney(o.amount)} ₽</td><td>${escapeHtml(o.comment || '')}${o.isPlanned ? ' (план)' : ''}</td></tr>`; }).join(''); const h = `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Отчёт</title><style>body{font-family:Arial;padding:20px;}table{width:100%;border-collapse:collapse;font-size:13px;}th,td{border:1px solid #ccc;padding:6px;text-align:left;}th{background:#f0f0f0;} .sum{margin:12px 0;padding:10px;background:#f8f8f8;} @media print{.no-print{display:none;}}</style></head><body><h1>Мои финансы</h1><div class="sum"><div>Сформирован: ${new Date().toLocaleString('ru-RU')}</div><div>Доходы: <b style="color:#1E563E;">${formatMoney(tI)} ₽</b></div><div>Расходы: <b style="color:#C94C4C;">${formatMoney(tE)} ₽</b></div><div>Баланс: <b>${formatMoney(tI - tE)} ₽</b></div></div><table><thead><tr><th>Дата</th><th>Категория</th><th>Счёт</th><th>Сумма</th><th>Комментарий</th></tr></thead><tbody>${rH}</tbody></table><p class="no-print" style="margin-top:20px;"><button onclick="window.print()">Печать / PDF</button></p></body></html>`; w.document.write(h); w.document.close(); }
+// ===== Выгрузка: единый список АБСОЛЮТНО ВСЕХ записей (операции + долги + архив) =====
+// Порядок строк — как в выбранной сортировке истории (по умолчанию новые сверху).
+function exportRecordRows() {
+  const dir = state.historySort === 'asc' ? -1 : 1; // desc (+1): новые сверху
+  const recs = [];
+  for (const o of state.operations) recs.push({ kind: 'op', key: opDateKey(o), created: o.createdAt || 0, updated: o.updatedAt || 0, it: o });
+  for (const d of state.debts) recs.push({ kind: 'debt', key: opDateKey({ date: d.dueDate || '', createdAt: d.createdAt }), created: d.createdAt || 0, updated: d.updatedAt || 0, it: d });
+  for (const a of state.archive) recs.push({ kind: 'arch', key: opDateKey({ date: a.date || '', createdAt: a.archivedAt }), created: a.archivedAt || 0, updated: a.archivedAt || 0, it: a });
+  recs.sort((x, y) => {
+    if (y.key !== x.key) return (y.key - x.key) * dir;
+    if (y.created !== x.created) return (y.created - x.created) * dir;
+    return (y.updated - x.updated) * dir;
+  });
+  return recs;
+}
+async function exportCSV() {
+  const rows = [['Дата', 'Тип', 'Сумма', 'Счёт', 'Категория', 'Плановое', 'Не в балансе', 'Долг', 'Комментарий'].join(';')];
+  for (const rec of exportRecordRows()) {
+    const o = rec.it;
+    if (rec.kind === 'op') {
+      const a = state.accounts.find(x => x.id === o.accountId);
+      const c = state.categories.find(x => x.id === o.categoryId);
+      const d = state.debts.find(x => x.id === o.linkedDebtId);
+      rows.push([o.date || '', o.type === 'income' ? 'Доход' : 'Расход', Number(o.amount).toFixed(2), a ? a.name : '', c ? c.name : '', o.isPlanned ? 'да' : 'нет', o.excludeFromBalance ? 'да' : 'нет', d ? d.name : '', o.comment || ''].map(csvEscape).join(';'));
+    } else if (rec.kind === 'debt') {
+      rows.push([o.dueDate || '', o.direction === 'i-owe' ? 'Долг (Я должна)' : 'Долг (Мне должны)', Number(o.initialAmount || 0).toFixed(2), '', '', o.isPlanned ? 'да' : 'нет', 'да', o.name, o.comment || ''].map(csvEscape).join(';'));
+    } else {
+      const d = state.debts.find(x => x.id === o.linkedDebtId);
+      rows.push([o.date || '', 'Архив · ' + (o.type === 'income' ? 'Доход' : 'Расход'), Number(o.amount).toFixed(2), o.accountName || '', o.categoryName || '', o.isPlanned ? 'да' : 'нет', o.excludeFromBalance ? 'да' : 'нет', d ? d.name : '', (o.comment || '') + ' [архив ' + o.archiveYear + ']'].map(csvEscape).join(';'));
+    }
+  }
+  downloadBlob('\uFEFF' + rows.join('\r\n'), 'finance-' + todayISO() + '.csv', 'text/csv;charset=utf-8');
+  showAlert('CSV сохранён. Включены все записи: операции, долги и архив.');
+}
+
+async function importCSV(file) {
+  try {
+    const t = await file.text();
+    const l = t.replace(/^\uFEFF/, '').split(/\r?\n/).filter(x => x.trim());
+    if (l.length < 2) throw new Error('Пустой файл');
+    const h = l[0].split(';').map(x => x.replace(/^"|"$/g, '').trim().toLowerCase());
+    const ix = n => h.indexOf(n);
+    const iD = ix('дата'), iT = ix('тип'), iA = ix('сумма'), iAc = ix('счёт'), iC = ix('категория'), iP = ix('плановое'), iE = ix('не в балансе'), iDbt = ix('долг'), iCm = ix('комментарий');
+    if (iT < 0 || iA < 0) throw new Error('Нет колонок');
+    const splitCSVLine = line => {
+      const r = []; let c = ''; let q = false;
+      for (let j = 0; j < line.length; j++) {
+        const ch = line[j];
+        if (ch === '"') { if (q && line[j + 1] === '"') { c += '"'; j++; } else q = !q; }
+        else if (ch === ';' && !q) { r.push(c); c = ''; }
+        else c += ch;
+      }
+      r.push(c); return r;
+    };
+    // Даты вида ДД.ММ.ГГГГ (например из Excel) приводим к ГГГГ-ММ-ДД
+    const parseCSVDate = v => {
+      const s = String(v || '').trim();
+      if (/^\d{2}\.\d{2}\.\d{4}$/.test(s)) { const p = s.split('.'); return p[2] + '-' + p[1] + '-' + p[0]; }
+      return s;
+    };
+    // Суммы вида «2 059,00» (с пробелами и запятой) парсим корректно
+    const parseCSVAmount = v => parseFloat(String(v || '0').replace(/[\s\u00A0]/g, '').replace(',', '.')) || 0;
+    const doImport = async () => {
+      try {
+        let add = 0, skipped = 0;
+        for (let j = 1; j < l.length; j++) {
+          const c = splitCSVLine(l[j]);
+          const typeRaw = String(c[iT] || '').toLowerCase().trim();
+          // Строки долгов и архива в CSV служебные: их переносит JSON-бэкап
+          if (typeRaw.startsWith('долг') || typeRaw.startsWith('архив')) { skipped++; continue; }
+          const ty = typeRaw.startsWith('дох') ? 'income' : 'expense';
+          const am = parseCSVAmount(c[iA]);
+          if (!am) continue;
+          let ac = state.accounts.find(x => x.name === (c[iAc] || '').trim());
+          if (!ac && state.accounts.length) ac = state.accounts[0];
+          let ct = state.categories.find(x => x.name === (c[iC] || '').trim() && x.type === ty);
+          if (!ct && c[iC]) { ct = { id: uid('cat'), type: ty, name: c[iC].trim(), createdAt: Date.now(), order: Date.now() }; await dbPut('categories', ct); state.categories.push(ct); }
+          const dbt = c[iDbt] ? state.debts.find(x => x.name === c[iDbt].trim()) : null;
+          const op = {
+            id: uid('op'), type: ty, amount: am, accountId: ac ? ac.id : '', categoryId: ct ? ct.id : '',
+            date: parseCSVDate(c[iD]), comment: (c[iCm] || '').trim(),
+            isPlanned: iP >= 0 && /^(да|yes|1)$/i.test((c[iP] || '').trim()),
+            excludeFromBalance: iE >= 0 && /^(да|yes|1)$/i.test((c[iE] || '').trim()),
+            linkedDebtId: dbt ? dbt.id : '', nested: [], manualSum: false, createdAt: Date.now(), updatedAt: Date.now()
+          };
+          await dbPut('operations', op); state.operations.push(op); add++;
+        }
+        renderDashboard(); renderOperations(); renderCategories();
+        showAlert('Импортировано: ' + add + (skipped ? '. Пропущено строк долгов/архива: ' + skipped + ' (они переносятся JSON-файлом).' : ''));
+      } catch (e) { showAlert('Ошибка: ' + e.message); }
+    };
+    showConfirm('Импортировать CSV?', doImport);
+  } catch (e) { showAlert('Ошибка: ' + e.message); }
+}
+
+async function exportTXT() {
+  const l = ['Мои финансы', 'Сформирован: ' + new Date().toLocaleString('ru-RU'), 'Записей всего: ' + (state.operations.length + state.debts.length + state.archive.length)];
+  const tI = state.operations.filter(o => !o.isPlanned && o.type === 'income').reduce((s, o) => s + o.amount, 0);
+  const tE = state.operations.filter(o => !o.isPlanned && o.type === 'expense').reduce((s, o) => s + o.amount, 0);
+  l.push('Доходы: ' + formatMoney(tI), 'Расходы: ' + formatMoney(tE), 'Баланс: ' + formatMoney(tI - tE), '---');
+  for (const rec of exportRecordRows()) {
+    const o = rec.it;
+    if (rec.kind === 'op') {
+      const a = state.accounts.find(x => x.id === o.accountId);
+      const c = state.categories.find(x => x.id === o.categoryId);
+      const d = state.debts.find(x => x.id === o.linkedDebtId);
+      let x = (o.date || 'без даты') + ' | ' + (o.type === 'income' ? '+' : '−') + formatMoney(o.amount) + ' | ' + (c ? c.name : '') + ' | ' + (a ? a.name : '') + (o.isPlanned ? ' | ПЛАН' : '') + (o.excludeFromBalance ? ' | НЕ В БАЛАНСЕ' : '');
+      if (d) x += ' | долг: ' + d.name;
+      if (o.comment) x += ' | ' + o.comment;
+      l.push(x);
+    } else if (rec.kind === 'debt') {
+      let x = (o.dueDate || 'без даты') + ' | ДОЛГ: ' + o.name + ' | ' + (o.direction === 'i-owe' ? 'Я должна' : 'Мне должны') + ' | ' + formatMoney(o.initialAmount || 0) + ' ₽' + (o.isPlanned ? ' | ПЛАН' : '');
+      if (o.comment) x += ' | ' + o.comment;
+      l.push(x);
+    } else {
+      let x = '[архив ' + o.archiveYear + '] ' + (o.date || 'без даты') + ' | ' + (o.type === 'income' ? '+' : '−') + formatMoney(o.amount) + ' | ' + (o.categoryName || '') + ' | ' + (o.accountName || '');
+      if (o.comment) x += ' | ' + o.comment;
+      l.push(x);
+    }
+  }
+  downloadBlob(l.join('\r\n'), 'finance-' + todayISO() + '.txt', 'text/plain;charset=utf-8');
+  showAlert('TXT сохранён. Включены все записи: операции, долги и архив.');
+}
+
+async function exportPDF() {
+  const w = window.open('', '_blank');
+  if (!w) { showAlert('Разрешите всплывающие окна для браузера, чтобы открыть отчёт.'); return; }
+  const tI = state.operations.filter(o => !o.isPlanned && o.type === 'income').reduce((s, o) => s + o.amount, 0);
+  const tE = state.operations.filter(o => !o.isPlanned && o.type === 'expense').reduce((s, o) => s + o.amount, 0);
+  const rH = exportRecordRows().map(rec => {
+    const o = rec.it;
+    let dt = '', cat = '', acc = '', cm = '', cl = '#666', sign = '', amt = '';
+    if (rec.kind === 'debt') {
+      dt = o.dueDate || ''; cat = 'Долг: ' + o.name; acc = '—';
+      cm = (o.direction === 'i-owe' ? 'Я должна' : 'Мне должны') + (o.isPlanned ? ' (план)' : '') + (o.comment ? ' · ' + o.comment : '');
+      amt = formatMoney(o.initialAmount || 0) + ' ₽';
+    } else if (rec.kind === 'arch') {
+      dt = o.date || ''; cat = o.categoryName || ''; acc = o.accountName || '—';
+      cl = o.type === 'income' ? '#1E563E' : '#C94C4C';
+      sign = o.type === 'income' ? '+' : '−'; amt = formatMoney(o.amount) + ' ₽';
+      cm = (o.comment || '') + ' [архив ' + o.archiveYear + ']';
+    } else {
+      const a = state.accounts.find(x => x.id === o.accountId);
+      const c = state.categories.find(x => x.id === o.categoryId);
+      const d = state.debts.find(x => x.id === o.linkedDebtId);
+      dt = o.date || ''; cat = c ? c.name : ''; acc = a ? a.name : '';
+      cl = o.type === 'income' ? '#1E563E' : '#C94C4C';
+      sign = o.type === 'income' ? '+' : '−'; amt = formatMoney(o.amount) + ' ₽';
+      cm = (o.comment || '') + (o.isPlanned ? ' (план)' : '') + (o.excludeFromBalance ? ' (не в балансе)' : '') + (d ? ' · долг: ' + d.name : '');
+    }
+    return `<tr><td>${escapeHtml(dt)}</td><td>${escapeHtml(cat)}</td><td>${escapeHtml(acc)}</td><td style="color:${cl};text-align:right;">${sign}${amt}</td><td>${escapeHtml(cm)}</td></tr>`;
+  }).join('');
+  const h = `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Отчёт</title><style>body{font-family:Arial;padding:20px;}table{width:100%;border-collapse:collapse;font-size:13px;}th,td{border:1px solid #ccc;padding:6px;text-align:left;}th{background:#f0f0f0;} .sum{margin:12px 0;padding:10px;background:#f8f8f8;} @media print{.no-print{display:none;}}</style></head><body><h1>Мои финансы</h1><div class="sum"><div>Сформирован: ${new Date().toLocaleString('ru-RU')}</div><div>Доходы: <b style="color:#1E563E;">${formatMoney(tI)} ₽</b></div><div>Расходы: <b style="color:#C94C4C;">${formatMoney(tE)} ₽</b></div><div>Баланс: <b>${formatMoney(tI - tE)} ₽</b></div></div><table><thead><tr><th>Дата</th><th>Категория</th><th>Счёт</th><th>Сумма</th><th>Комментарий</th></tr></thead><tbody>${rH}</tbody></table><p class="no-print" style="margin-top:20px;"><button onclick="window.print()">Печать / PDF</button></p></body></html>`;
+  w.document.write(h); w.document.close();
+}
+
 async function updateStorageInfo() { const i = document.getElementById('storage-info'); const f = document.getElementById('storage-bar-fill'); if (!i) return; try { const e = await navigator.storage.estimate(); const u = e.usage || 0; const q = e.quota || 0; const p = q ? Math.min(100, (u / q) * 100) : 0; i.textContent = 'Занято: ' + formatBytes(u) + ' из ' + formatBytes(q) + ' (' + p.toFixed(2) + '%)'; if (f) f.style.width = p + '%'; } catch (e) { i.textContent = 'Ошибка'; } }
 function formatBytes(b) { if (!b) return '0 Б'; const u = ['Б', 'КБ', 'МБ', 'ГБ']; let i = 0, n = b; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return n.toFixed(2) + ' ' + u[i]; }
-async function requestPersistentStorage() { if (!navigator.storage || !navigator.storage.persist) return alert('Не поддерживается'); const g = await navigator.storage.persist(); alert(g ? 'Разрешено' : 'Запрещено'); updateStorageInfo(); }
+async function requestPersistentStorage() {
+  if (!navigator.storage || !navigator.storage.persist) { showAlert('Не поддерживается'); return; }
+  const g = await navigator.storage.persist();
+  showAlert(g ? 'Разрешено' : 'Запрещено');
+  updateStorageInfo();
+}
 
 function setupNavigation() { $$('[data-screen]').forEach(b => b.onclick = () => switchScreen(b.dataset.screen)); }
 function setupModals() {
@@ -849,6 +1050,34 @@ function setupHistoryFilters() {
   document.getElementById('btn-mass-delete').onclick = deleteSelectedOperations;
   document.getElementById('btn-mass-archive').onclick = archiveSelectedOperations;
 }
+// ===== Сортировка истории: иконка с выбором «Сначала новые» / «Сначала старые» =====
+function setupSortControl() {
+  const btn = document.getElementById('btn-sort-toggle');
+  const menu = document.getElementById('sort-menu');
+  if (!btn || !menu) return;
+  const label = document.getElementById('sort-toggle-label');
+  const opts = { desc: document.getElementById('sort-option-desc'), asc: document.getElementById('sort-option-asc') };
+  const sync = () => {
+    const dir = state.historySort;
+    if (label) label.textContent = dir === 'asc' ? 'Сначала старые' : 'Сначала новые';
+    Object.keys(opts).forEach(k => { if (opts[k]) opts[k].classList.toggle('active', k === dir); });
+  };
+  const apply = (dir) => {
+    state.historySort = dir;
+    try { localStorage.setItem('historySort', dir); } catch (e) {}
+    menu.classList.add('hidden');
+    sync();
+    renderOperations();
+  };
+  btn.onclick = (e) => { e.stopPropagation(); menu.classList.toggle('hidden'); };
+  if (opts.desc) opts.desc.onclick = () => apply('desc');
+  if (opts.asc) opts.asc.onclick = () => apply('asc');
+  document.addEventListener('click', (e) => {
+    if (!menu.classList.contains('hidden') && !e.target.closest('#sort-dropdown')) menu.classList.add('hidden');
+  });
+  sync();
+}
+
 function setupReports() { $$('.report-tabs button').forEach(b => b.onclick = () => { $$('.report-tabs button').forEach(x => x.classList.toggle('active', x === b)); renderReports(); }); document.getElementById('report-period-select').onchange = (e) => { document.getElementById('report-custom-period').classList.toggle('hidden', e.target.value !== 'custom'); renderReports(); }; ['report-date-from', 'report-date-to'].forEach(id => document.getElementById(id).onchange = renderReports); }
 function setupArchive() {
   document.getElementById('btn-manual-archive').onclick = archiveSelectedOperations; document.getElementById('btn-export-archive').onclick = exportArchiveJSON;
@@ -859,7 +1088,8 @@ function setupArchive() {
 async function init() {
   loadTheme(); state.db = await openDB();
   await loadAccounts(); await loadCategories(); await loadTemplates(); await loadOperations(); await loadDebts(); await loadArchive();
-  setupNavigation(); setupModals(); setupModalXButtons(); setupOverlayClose(); setupFormDirtyTracking(); setupTheme(); setupSettingsButtons(); setupDebtForm(); setupOperationForm(); setupDashboardPeriod(); setupHistoryFilters(); setupReports(); setupArchive(); setupImportChoiceModal();
+  await migrateDefaultCategories(); // одноразовое приведение категорий к спискам по умолчанию (по скринам)
+  setupNavigation(); setupModals(); setupModalXButtons(); setupOverlayClose(); setupFormDirtyTracking(); setupTheme(); setupSettingsButtons(); setupDebtForm(); setupOperationForm(); setupDashboardPeriod(); setupHistoryFilters(); setupSortControl(); setupReports(); setupArchive(); setupImportChoiceModal();
   switchScreen('dashboard');
   // Тихая авто-архивация отключена: абсолютно все записи остаются в истории,
   // пока вы сами не отправите их в архив. Напоминание при этом показывается.
@@ -893,7 +1123,18 @@ function updateMobileMode() {
   else if (mq.addListener) mq.addListener(updateMobileMode);
 });
 
-if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js')); }
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js', { updateViaCache: 'none' }));
+  // Когда новый Service Worker забирает управление — перезагружаем страницу один раз,
+  // чтобы обновление применилось сразу (а не со следующего открытия приложения).
+  const hadControllerAtLoad = !!navigator.serviceWorker.controller;
+  let swReloadDone = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (swReloadDone || !hadControllerAtLoad) return;
+    swReloadDone = true;
+    location.reload();
+  });
+}
 document.addEventListener('DOMContentLoaded', () => { updateMobileMode(); init(); });
 // Экспорт для inline-обработчиков в отчётах
 window.state = state;

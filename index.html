@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Мои финансы</title>
   <meta name="theme-color" content="#ffffff">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=14">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon-512.png" type="image/png">
 </head>
@@ -71,7 +71,16 @@
     <section id="screen-history" class="screen">
       <div class="history-header">
         <h2>История</h2>
-        <button id="btn-toggle-filters" class="btn-small">Фильтры ▾</button>
+        <div class="history-header-actions">
+          <div class="sort-dropdown" id="sort-dropdown">
+            <button id="btn-sort-toggle" class="btn-small" title="Порядок сортировки">⇅ <span id="sort-toggle-label">Сначала новые</span></button>
+            <div id="sort-menu" class="sort-menu hidden">
+              <button id="sort-option-desc" data-sort="desc" class="sort-option active" type="button">⬇ Сначала новые</button>
+              <button id="sort-option-asc" data-sort="asc" class="sort-option" type="button">⬆ Сначала старые</button>
+            </div>
+          </div>
+          <button id="btn-toggle-filters" class="btn-small">Фильтры ▾</button>
+        </div>
       </div>
       
       <div id="filters-panel" class="filters-panel hidden">
@@ -356,6 +365,6 @@
   <template id="template-item-template"><div class="list-item"><div class="list-item-main"><span class="item-name"></span><span class="item-fields-count"></span></div><div class="item-actions"><button class="btn-small item-edit">✎</button><button class="btn-small item-delete">🗑</button></div></div></template>
   <template id="archive-item-template"><div class="archive-item"><div class="archive-item-main"><span class="arch-amount"></span><span class="arch-category"></span><span class="arch-date"></span><span class="arch-note"></span></div><button class="btn-small arch-restore">↩</button></div></template>
 
-  <script src="script.js" defer></script>
+  <script src="script.js?v=14" defer></script>
 </body>
 </html>

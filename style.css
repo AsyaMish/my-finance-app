@@ -216,3 +216,14 @@ form input:focus, form select:focus { background: var(--card-bg); border-color: 
 
 /* Состояние кнопок выбора режима импорта */
 .import-choice-card:disabled { opacity: 0.5; pointer-events: none; }
+
+/* ===== Шапка истории: иконка сортировки с выбором порядка ===== */
+.history-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
+.history-header h2 { margin: 0; }
+.history-header-actions { display: flex; gap: 8px; align-items: center; }
+.sort-dropdown { position: relative; }
+.sort-menu { position: absolute; right: 0; top: calc(100% + 6px); background: var(--card-bg); border-radius: 14px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18); padding: 6px; z-index: 80; min-width: 200px; display: flex; flex-direction: column; gap: 2px; }
+.sort-option { text-align: left; padding: 10px 14px; border: none; background: transparent; color: var(--text); font-size: 14px; font-weight: 600; border-radius: 10px; cursor: pointer; }
+.sort-option:hover { background: var(--input-bg); }
+.sort-option.active { background: var(--accent-light); color: var(--accent); }
+@media (max-width: 359px) { #sort-toggle-label { display: none; } }
