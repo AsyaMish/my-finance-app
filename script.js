@@ -75,7 +75,7 @@ function dbPut(store, item) { return new Promise((res, rej) => { const tx = stat
 function dbDelete(store, id) { return new Promise((res, rej) => { const tx = state.db.transaction(store, 'readwrite'); tx.objectStore(store).delete(id); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
 
 function getSystemTheme() { return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
-function applyTheme(theme) { const eff = theme === 'system' ? getSystemTheme() : theme; document.documentElement.setAttribute('data-theme', eff); const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', eff === 'dark' ? '#121212' : '#F5F6F5'); $$('input[name="theme"]').forEach(r => r.checked = (r.value === theme)); }
+function applyTheme(theme) { const eff = theme === 'system' ? getSystemTheme() : theme; document.documentElement.setAttribute('data-theme', eff); const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', eff === 'dark' ? '#0E1512' : '#F0F7F3'); $$('input[name="theme"]').forEach(r => r.checked = (r.value === theme)); }
 function loadTheme() { const t = localStorage.getItem('theme') || 'system'; state.settings.theme = t; applyTheme(t); }
 function setTheme(t) { localStorage.setItem('theme', t); state.settings.theme = t; applyTheme(t); }
 function cycleTheme() { const o = ['system', 'light', 'dark']; setTheme(o[(o.indexOf(state.settings.theme) + 1) % o.length]); }
@@ -951,14 +951,14 @@ async function exportPDF() {
   const tE = state.operations.filter(o => !o.isPlanned && o.type === 'expense').reduce((s, o) => s + o.amount, 0);
   const rH = exportRecordRows().map(rec => {
     const o = rec.it;
-    let dt = '', cat = '', acc = '', cm = '', cl = '#666', sign = '', amt = '';
+    let dt = '', cat = '', acc = '', cm = '', cl = '#6B7D74', sign = '', amt = '';
     if (rec.kind === 'debt') {
       dt = o.dueDate || ''; cat = 'Долг: ' + o.name; acc = '—';
       cm = (o.direction === 'i-owe' ? 'Я должна' : 'Мне должны') + (o.isPlanned ? ' (план)' : '') + (o.comment ? ' · ' + o.comment : '');
       amt = formatMoney(o.initialAmount || 0) + ' ₽';
     } else if (rec.kind === 'arch') {
       dt = o.date || ''; cat = o.categoryName || ''; acc = o.accountName || '—';
-      cl = o.type === 'income' ? '#1E563E' : '#C94C4C';
+      cl = o.type === 'income' ? '#0E9F6E' : '#E25555';
       sign = o.type === 'income' ? '+' : '−'; amt = formatMoney(o.amount) + ' ₽';
       cm = (o.comment || '') + ' [архив ' + o.archiveYear + ']';
     } else {
@@ -966,13 +966,13 @@ async function exportPDF() {
       const c = state.categories.find(x => x.id === o.categoryId);
       const d = state.debts.find(x => x.id === o.linkedDebtId);
       dt = o.date || ''; cat = c ? c.name : ''; acc = a ? a.name : '';
-      cl = o.type === 'income' ? '#1E563E' : '#C94C4C';
+      cl = o.type === 'income' ? '#0E9F6E' : '#E25555';
       sign = o.type === 'income' ? '+' : '−'; amt = formatMoney(o.amount) + ' ₽';
       cm = (o.comment || '') + (o.isPlanned ? ' (план)' : '') + (o.excludeFromBalance ? ' (не в балансе)' : '') + (d ? ' · долг: ' + d.name : '');
     }
     return `<tr><td>${escapeHtml(dt)}</td><td>${escapeHtml(cat)}</td><td>${escapeHtml(acc)}</td><td style="color:${cl};text-align:right;">${sign}${amt}</td><td>${escapeHtml(cm)}</td></tr>`;
   }).join('');
-  const h = `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Отчёт</title><style>body{font-family:Arial;padding:20px;}table{width:100%;border-collapse:collapse;font-size:13px;}th,td{border:1px solid #ccc;padding:6px;text-align:left;}th{background:#f0f0f0;} .sum{margin:12px 0;padding:10px;background:#f8f8f8;} @media print{.no-print{display:none;}}</style></head><body><h1>Мои финансы</h1><div class="sum"><div>Сформирован: ${new Date().toLocaleString('ru-RU')}</div><div>Доходы: <b style="color:#1E563E;">${formatMoney(tI)} ₽</b></div><div>Расходы: <b style="color:#C94C4C;">${formatMoney(tE)} ₽</b></div><div>Баланс: <b>${formatMoney(tI - tE)} ₽</b></div></div><table><thead><tr><th>Дата</th><th>Категория</th><th>Счёт</th><th>Сумма</th><th>Комментарий</th></tr></thead><tbody>${rH}</tbody></table><p class="no-print" style="margin-top:20px;"><button onclick="window.print()">Печать / PDF</button></p></body></html>`;
+  const h = `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Отчёт</title><style>body{font-family:Arial;padding:20px;}table{width:100%;border-collapse:collapse;font-size:13px;}th,td{border:1px solid #DFEAE4;padding:6px;text-align:left;}th{background:#E3F0E9;} .sum{margin:12px 0;padding:10px;background:#F0F7F3;border-radius:8px;} @media print{.no-print{display:none;}}</style></head><body><h1>Мои финансы</h1><div class="sum"><div>Сформирован: ${new Date().toLocaleString('ru-RU')}</div><div>Доходы: <b style="color:#0E9F6E;">${formatMoney(tI)} ₽</b></div><div>Расходы: <b style="color:#E25555;">${formatMoney(tE)} ₽</b></div><div>Баланс: <b>${formatMoney(tI - tE)} ₽</b></div></div><table><thead><tr><th>Дата</th><th>Категория</th><th>Счёт</th><th>Сумма</th><th>Комментарий</th></tr></thead><tbody>${rH}</tbody></table><p class="no-print" style="margin-top:20px;"><button onclick="window.print()">Печать / PDF</button></p></body></html>`;
   w.document.write(h); w.document.close();
 }
 
@@ -988,6 +988,8 @@ async function requestPersistentStorage() {
 function setupNavigation() { $$('[data-screen]').forEach(b => b.onclick = () => switchScreen(b.dataset.screen)); }
 function setupModals() {
   document.getElementById('fab-add-center').onclick = () => openModal('modal-add-choice');
+  const addDesktop = document.getElementById('btn-add-desktop');
+  if (addDesktop) addDesktop.onclick = () => openModal('modal-add-choice');
   $$('.modal-close').forEach(b => b.onclick = () => closeAllModals());
   $$('[data-add]').forEach(b => { b.onclick = () => { const t = b.dataset.add; closeModal('modal-add-choice'); if (t === 'debt') openDebtForm(); else { openOperationForm(); document.getElementById('op-type').value = t; fillCategorySelect(); } }; });
   document.getElementById('btn-cancel-operation').onclick = () => tryCloseModal('modal-operation');

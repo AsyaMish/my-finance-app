@@ -3,8 +3,8 @@
   "short_name": "Финансы",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#F5F6F5",
-  "theme_color": "#1E563E",
+  "background_color": "#F0F7F3",
+  "theme_color": "#0E9F6E",
   "icons": [
     {
       "src": "icon-512.png",
