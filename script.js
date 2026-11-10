@@ -820,6 +820,8 @@ async function importJSON(file) {
   }
 }
 function csvEscape(v) { const s = String(v == null ? '' : v); return s.includes(';') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; }
+/* Сумма для CSV: запятая как десятичный разделитель (399,99) — Excel сразу видит число */
+function csvNum(n) { return Number(n || 0).toFixed(2).replace('.', ','); }
 // ===== Выгрузка: единый список АБСОЛЮТНО ВСЕХ записей (операции + долги + архив) =====
 // Порядок строк — как в выбранной сортировке истории (по умолчанию новые сверху).
 function exportRecordRows() {
@@ -843,12 +845,12 @@ async function exportCSV() {
       const a = state.accounts.find(x => x.id === o.accountId);
       const c = state.categories.find(x => x.id === o.categoryId);
       const d = state.debts.find(x => x.id === o.linkedDebtId);
-      rows.push([o.date || '', o.type === 'income' ? 'Доход' : 'Расход', Number(o.amount).toFixed(2), a ? a.name : '', c ? c.name : '', o.isPlanned ? 'да' : 'нет', o.excludeFromBalance ? 'да' : 'нет', d ? d.name : '', o.comment || ''].map(csvEscape).join(';'));
+      rows.push([o.date || '', o.type === 'income' ? 'Доход' : 'Расход', csvNum(o.amount), a ? a.name : '', c ? c.name : '', o.isPlanned ? 'да' : 'нет', o.excludeFromBalance ? 'да' : 'нет', d ? d.name : '', o.comment || ''].map(csvEscape).join(';'));
     } else if (rec.kind === 'debt') {
-      rows.push([o.dueDate || '', o.direction === 'i-owe' ? 'Долг (Я должна)' : 'Долг (Мне должны)', Number(o.initialAmount || 0).toFixed(2), '', '', o.isPlanned ? 'да' : 'нет', 'да', o.name, o.comment || ''].map(csvEscape).join(';'));
+      rows.push([o.dueDate || '', o.direction === 'i-owe' ? 'Долг (Я должна)' : 'Долг (Мне должны)', csvNum(o.initialAmount), '', '', o.isPlanned ? 'да' : 'нет', 'да', o.name, o.comment || ''].map(csvEscape).join(';'));
     } else {
       const d = state.debts.find(x => x.id === o.linkedDebtId);
-      rows.push([o.date || '', 'Архив · ' + (o.type === 'income' ? 'Доход' : 'Расход'), Number(o.amount).toFixed(2), o.accountName || '', o.categoryName || '', o.isPlanned ? 'да' : 'нет', o.excludeFromBalance ? 'да' : 'нет', d ? d.name : '', (o.comment || '') + ' [архив ' + o.archiveYear + ']'].map(csvEscape).join(';'));
+      rows.push([o.date || '', 'Архив · ' + (o.type === 'income' ? 'Доход' : 'Расход'), csvNum(o.amount), o.accountName || '', o.categoryName || '', o.isPlanned ? 'да' : 'нет', o.excludeFromBalance ? 'да' : 'нет', d ? d.name : '', (o.comment || '') + ' [архив ' + o.archiveYear + ']'].map(csvEscape).join(';'));
     }
   }
   downloadBlob('\uFEFF' + rows.join('\r\n'), 'finance-' + todayISO() + '.csv', 'text/csv;charset=utf-8');
@@ -860,8 +862,11 @@ async function importCSV(file) {
     const t = await file.text();
     const l = t.replace(/^\uFEFF/, '').split(/\r?\n/).filter(x => x.trim());
     if (l.length < 2) throw new Error('Пустой файл');
-    const h = l[0].split(';').map(x => x.replace(/^"|"$/g, '').trim().toLowerCase());
-    const ix = n => h.indexOf(n);
+    // Разделитель: «;» (наш формат по умолчанию) или «,» (старые файлы)
+    const delim = l[0].includes(';') ? ';' : ',';
+    const h = l[0].split(delim).map(x => x.replace(/^"|"$/g, '').trim().toLowerCase());
+    // Заголовки находим гибко: «Дата», «Дата операции», «Сумма» и т.п.
+    const ix = (...names) => h.findIndex(x => names.some(n => x === n || x.startsWith(n)));
     const iD = ix('дата'), iT = ix('тип'), iA = ix('сумма'), iAc = ix('счёт'), iC = ix('категория'), iP = ix('плановое'), iE = ix('не в балансе'), iDbt = ix('долг'), iCm = ix('комментарий');
     if (iT < 0 || iA < 0) throw new Error('Нет колонок');
     const splitCSVLine = line => {
@@ -869,7 +874,7 @@ async function importCSV(file) {
       for (let j = 0; j < line.length; j++) {
         const ch = line[j];
         if (ch === '"') { if (q && line[j + 1] === '"') { c += '"'; j++; } else q = !q; }
-        else if (ch === ';' && !q) { r.push(c); c = ''; }
+        else if (ch === delim && !q) { r.push(c); c = ''; }
         else c += ch;
       }
       r.push(c); return r;
@@ -890,7 +895,7 @@ async function importCSV(file) {
           const typeRaw = String(c[iT] || '').toLowerCase().trim();
           // Строки долгов и архива в CSV служебные: их переносит JSON-бэкап
           if (typeRaw.startsWith('долг') || typeRaw.startsWith('архив')) { skipped++; continue; }
-          const ty = typeRaw.startsWith('дох') ? 'income' : 'expense';
+          const ty = (typeRaw.startsWith('дох') || typeRaw.startsWith('прих')) ? 'income' : 'expense';
           const am = parseCSVAmount(c[iA]);
           if (!am) continue;
           let ac = state.accounts.find(x => x.name === (c[iAc] || '').trim());
