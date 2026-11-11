@@ -643,3 +643,10 @@ label.checkbox-label:hover { background: var(--accent-light); }
 .modal-buttons { display: flex; gap: 12px; margin-top: 16px; }
 .modal-buttons button { flex: 1; }
 .modal-content > p { margin: 8px 0 4px; line-height: 1.5; }
+
+/* Всплывающее уведомление (toast), как в «Коммуналке»: плашка внизу экрана */
+#toast-root { position: fixed; left: 50%; bottom: calc(92px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+@media (min-width: 800px) { #toast-root { bottom: 24px; } }
+.toast { background: #2F3E36; color: #FFFFFF; padding: 11px 20px; border-radius: 999px; font-size: 14px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); animation: toast-in 0.2s ease; transition: opacity 0.25s ease, transform 0.25s ease; max-width: min(90vw, 440px); text-align: center; }
+.toast.toast-out { opacity: 0; transform: translateY(8px); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

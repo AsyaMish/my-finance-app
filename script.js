@@ -577,26 +577,42 @@ async function loadArchive() { state.archive = await dbGetAll('archive'); }
 function isOlderThanOneYear(dateISO) { if (!dateISO) return false; const d = new Date(dateISO); const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1); return d < cutoff; }
 function isCreatedOlderThanOneYear(createdAt) { return createdAt && createdAt < Date.now() - 365 * 24 * 60 * 60 * 1000; }
 function operationToArchiveItem(op, year, fromAuto = false) {
-  return { id: op.id, type: op.type, amount: op.amount, accountId: op.accountId, accountName: (state.accounts.find(a => a.id === op.accountId) || {}).name || '—', categoryId: op.categoryId, categoryName: (state.categories.find(c => c.id === op.categoryId) || {}).name || 'Без кат.', date: op.date || '', comment: op.comment || '', isPlanned: !!op.isPlanned, excludeFromBalance: !!op.excludeFromBalance, linkedDebtId: op.linkedDebtId || '', nested: op.nested || [], archiveYear: year, archivedAt: Date.now(), fromAuto };
+  return { id: op.id, type: op.type, amount: op.amount, accountId: op.accountId, accountName: (state.accounts.find(a => a.id === op.accountId) || {}).name || '—', categoryId: op.categoryId, categoryName: (state.categories.find(c => c.id === op.categoryId) || {}).name || 'Без кат.', date: op.date || '', comment: op.comment || '', isPlanned: !!op.isPlanned, excludeFromBalance: !!op.excludeFromBalance, linkedDebtId: op.linkedDebtId || '', nested: op.nested || [], archiveYear: year, archivedAt: Date.now(), fromAuto, compensated: true };
+}
+// Перенос операции в архив не должен менять никакие суммы: влияние операции на баланс
+// счёта и остаток долга заранее «зашивается» в начальные остатки (признак compensated).
+// sign = 1 — операция уходит в архив; sign = -1 — возвращается из архива.
+async function foldOperationIntoTotals(op, sign) {
+  if (op.isPlanned) return;
+  if (!op.excludeFromBalance) {
+    const acc = state.accounts.find(a => a.id === op.accountId);
+    if (acc) { acc.initialBalance = fromK(toK(acc.initialBalance) + toK(op.amount) * (op.type === 'income' ? 1 : -1) * sign); await dbPut('accounts', acc); }
+  }
+  if (op.linkedDebtId) {
+    const d = state.debts.find(x => x.id === op.linkedDebtId);
+    if (d) { d.initialAmount = fromK(toK(d.initialAmount) - toK(op.amount) * sign); await dbPut('debts', d); }
+  }
 }
 function archiveYearForOperation(op) { return op.date ? new Date(op.date).getFullYear() : new Date().getFullYear(); }
 async function archiveOperations(ops, yearByOp) {
-  for (const op of ops) { const y = yearByOp[op.id] || archiveYearForOperation(op); await dbPut('archive', operationToArchiveItem(op, y, false)); await dbDelete('operations', op.id); }
+  for (const op of ops) { await foldOperationIntoTotals(op, 1); const y = yearByOp[op.id] || archiveYearForOperation(op); await dbPut('archive', operationToArchiveItem(op, y, false)); await dbDelete('operations', op.id); }
   state.operations = state.operations.filter(o => !ops.find(x => x.id === o.id)); state.archive = await dbGetAll('archive'); state.selectedOperations.clear(); renderDashboard(); renderOperations(); renderArchive();
 }
 async function archiveSelectedOperations() {
   const ids = Array.from(state.selectedOperations); if (!ids.length) return; const ops = state.operations.filter(o => ids.includes(o.id));
-  const debtOps = ops.filter(o => o.linkedDebtId);
   const wD = ops.filter(o => !o.date);
   let msg = `Архивировать ${ops.length} операций?`;
   if (wD.length) msg += `\nУ ${wD.length} записей нет даты — год архива определится автоматически.`;
-  if (debtOps.length) msg += `\nСреди выбранных ${debtOps.length} операций привязаны к долгам: после архивации остатки долгов увеличатся.`;
+  msg += '\nБалансы счетов и остатки долгов при архивации не изменятся.';
   showConfirm(msg, () => archiveOperations(ops, {}));
 }
+// Авто-архивация (как в приложении «Коммуналка»): записи с датой старше 1 года
+// автоматически переносятся в архив своего года. Возвращает число перемещённых записей.
 async function autoArchiveOldOperations() {
-  const old = state.operations.filter(o => o.date && isOlderThanOneYear(o.date)); if (!old.length) return;
-  for (const op of old) { await dbPut('archive', operationToArchiveItem(op, archiveYearForOperation(op), true)); await dbDelete('operations', op.id); }
+  const old = state.operations.filter(o => o.date && isOlderThanOneYear(o.date)); if (!old.length) return 0;
+  for (const op of old) { await foldOperationIntoTotals(op, 1); await dbPut('archive', operationToArchiveItem(op, archiveYearForOperation(op), true)); await dbDelete('operations', op.id); }
   state.operations = state.operations.filter(o => !old.find(x => x.id === o.id)); state.archive = await dbGetAll('archive'); renderDashboard(); renderOperations(); renderArchive();
+  return old.length;
 }
 function getOldUndatedOperations() { return state.operations.filter(o => !o.date && isCreatedOlderThanOneYear(o.createdAt)); }
 function showArchiveNotificationIfNeeded() {
@@ -615,7 +631,7 @@ function renderArchive() {
   const items = state.archive.filter(a => a.archiveYear === cur).sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0)); lB.innerHTML = ''; const t = document.getElementById('archive-item-template');
   items.forEach(a => { const n = t.content.firstElementChild.cloneNode(true); const aE = n.querySelector('.arch-amount'); aE.textContent = (a.type === 'income' ? '+' : '−') + formatMoney(a.amount) + ' ₽'; aE.classList.add(a.type === 'income' ? 'income' : 'expense'); n.querySelector('.arch-category').textContent = a.categoryName; n.querySelector('.arch-date').textContent = a.date || 'Без даты'; n.querySelector('.arch-note').textContent = a.comment || ''; n.querySelector('.arch-restore').onclick = () => restoreFromArchive(a.id); lB.appendChild(n); });
 }
-async function restoreFromArchive(id) { const i = state.archive.find(a => a.id === id); if (!i) return; showConfirm('Восстановить запись из архива?', async () => { const op = { id: i.id, type: i.type, amount: i.amount, accountId: i.accountId, categoryId: i.categoryId, date: i.date || '', comment: i.comment || '', isPlanned: i.isPlanned || false, excludeFromBalance: !!i.excludeFromBalance, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], manualSum: false, createdAt: i.archivedAt || Date.now(), updatedAt: Date.now() }; await dbPut('operations', op); await dbDelete('archive', i.id); state.operations.push(op); state.archive = state.archive.filter(a => a.id !== i.id); renderDashboard(); renderOperations(); renderArchive(); }); }
+async function restoreFromArchive(id) { const i = state.archive.find(a => a.id === id); if (!i) return; showConfirm('Восстановить запись из архива?', async () => { const op = { id: i.id, type: i.type, amount: i.amount, accountId: i.accountId, categoryId: i.categoryId, date: i.date || '', comment: i.comment || '', isPlanned: i.isPlanned || false, excludeFromBalance: !!i.excludeFromBalance, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], manualSum: false, createdAt: i.archivedAt || Date.now(), updatedAt: Date.now() }; if (i.compensated) await foldOperationIntoTotals(op, -1); await dbPut('operations', op); await dbDelete('archive', i.id); state.operations.push(op); state.archive = state.archive.filter(a => a.id !== i.id); renderDashboard(); renderOperations(); renderArchive(); }); }
 async function exportArchiveJSON() {
   const y = [...new Set(state.archive.map(a => a.archiveYear))].sort((a, b) => b - a); if (!y.length) { showAlert('Архив пуст'); return; }
   showPrompt(`За какой год? (${y.join(', ')}, пусто — всё)`, '', (i) => {
@@ -631,7 +647,7 @@ async function importArchiveJSON(file) {
     const t = await file.text(); const d = JSON.parse(t); const it = Array.isArray(d) ? d : (d.items || []);
     if (!it.length) { showAlert('Нет записей'); return; }
     showConfirm(`Импортировать ${it.length} записей?`, async () => {
-      for (const i of it) { const itm = { id: i.id || uid('arch'), type: i.type || 'expense', amount: round2(Number(i.amount)), accountId: i.accountId || '', accountName: i.accountName || '—', categoryId: i.categoryId || '', categoryName: i.categoryName || 'Без кат.', date: i.date || '', comment: i.comment || '', isPlanned: !!i.isPlanned, excludeFromBalance: !!i.excludeFromBalance, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], archiveYear: i.archiveYear || new Date().getFullYear(), archivedAt: i.archivedAt || Date.now(), fromAuto: false }; await dbPut('archive', itm); }
+      for (const i of it) { const itm = { id: i.id || uid('arch'), type: i.type || 'expense', amount: round2(Number(i.amount)), accountId: i.accountId || '', accountName: i.accountName || '—', categoryId: i.categoryId || '', categoryName: i.categoryName || 'Без кат.', date: i.date || '', comment: i.comment || '', isPlanned: !!i.isPlanned, excludeFromBalance: !!i.excludeFromBalance, linkedDebtId: i.linkedDebtId || '', nested: i.nested || [], archiveYear: i.archiveYear || new Date().getFullYear(), archivedAt: i.archivedAt || Date.now(), fromAuto: false, compensated: !!i.compensated }; await dbPut('archive', itm); }
       state.archive = await dbGetAll('archive'); renderArchive(); showAlert('Импорт завершён');
     });
   } catch (e) { showAlert('Ошибка: ' + e.message); }
@@ -700,6 +716,14 @@ function showAlert(message) {
     } else { resolve(); }
     openModal('modal-confirm');
   });
+}
+// Всплывающее уведомление (toast) — как в приложении «Коммуналка»: небольшая плашка
+// внизу экрана, исчезает сама через несколько секунд.
+function showToast(message, ms = 3000) {
+  let root = document.getElementById('toast-root');
+  if (!root) { root = document.createElement('div'); root.id = 'toast-root'; document.body.appendChild(root); }
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = message; root.appendChild(t);
+  setTimeout(() => { t.classList.add('toast-out'); setTimeout(() => t.remove(), 260); }, ms);
 }
 // In-app аналог window.prompt (в мобильных браузерах и PWA window.prompt может молча блокироваться)
 function showPrompt(message, defaultValue, onOk) {
@@ -1098,8 +1122,11 @@ async function init() {
   await migrateDefaultCategories(); // одноразовое приведение категорий к спискам по умолчанию (по скринам)
   setupNavigation(); setupModals(); setupModalXButtons(); setupOverlayClose(); setupFormDirtyTracking(); setupTheme(); setupSettingsButtons(); setupDebtForm(); setupOperationForm(); setupDashboardPeriod(); setupHistoryFilters(); setupSortControl(); setupReports(); setupArchive(); setupImportChoiceModal();
   switchScreen('dashboard');
-  // Тихая авто-архивация отключена: абсолютно все записи остаются в истории,
-  // пока вы сами не отправите их в архив. Напоминание при этом показывается.
+  // Авто-архивация (как в приложении «Коммуналка»): при каждом запуске записи
+  // с датой старше одного года автоматически переносятся в архив своего года.
+  // Балансы счетов и остатки долгов при этом не меняются.
+  const nAutoArchived = await autoArchiveOldOperations();
+  if (nAutoArchived > 0) showToast('В архив перемещено записей: ' + nAutoArchived);
   showArchiveNotificationIfNeeded();
 }
 
