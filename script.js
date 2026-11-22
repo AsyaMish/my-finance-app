@@ -1141,6 +1141,7 @@ const YD = {
   LS_TOKEN_EXP: 'sync.ydisk.tokenExp',
   LS_CLIENT: 'sync.ydisk.clientId',
   LS_STATE: 'sync.ydisk.oauthState',
+  LS_PROVIDER: 'sync.provider',
   LS_LAST_CHANGE: 'sync.lastChange',
   LS_LAST_SYNC: 'sync.lastSyncedAt',
   LS_AUTO: 'sync.auto',
@@ -1281,6 +1282,217 @@ async function ydBackupCloudFile() {
     await ydApi('PUT', YD.API + '/v1/disk/resources/copy?from=' + encodeURIComponent(YD.FILE) + '&path=' + encodeURIComponent(YD.BACKUP_DIR + '/cloud-' + ts + '.json'));
   } catch (e) { /* резервная копия не критична — не мешаем основной операции */ }
 }
+
+// ==================== Dropbox (второй провайдер синхронизации) ====================
+// В отличие от Яндекса, файловые эндпоинты Dropbox (content.dropboxapi.com) сами
+// отдают CORS-заголовки — скачивание и загрузка работают из браузера напрямую,
+// без подписанных ссылок на отдельный файловый хост (именно они ломались у Яндекса).
+// Токены: короткоживущий access (~4 ч) + долгоживущий refresh, получаемые через
+// OAuth 2.0 с PKCE — приложение в Dropbox регистрируется как «браузерное», без секрета.
+const DBX = {
+  API: 'https://api.dropboxapi.com',        // RPC-вызовы и обмен токенов
+  CONTENT: 'https://content.dropboxapi.com', // загрузка/скачивание файла
+  AUTH: 'https://www.dropbox.com/oauth2/authorize',
+  FILE: '/data.json',                       // путь внутри папки приложения (Apps/<Название>/)
+  BACKUP_DIR: '/backups',                   // резервные копии там же
+  LS_ACCESS: 'sync.dbx.accessToken',
+  LS_REFRESH: 'sync.dbx.refreshToken',
+  LS_EXP: 'sync.dbx.exp',
+  LS_CLIENT: 'sync.dbx.clientId',
+  LS_PKCE: 'sync.dbx.pkce',
+};
+
+function dbxStoredClientId() { try { return localStorage.getItem(DBX.LS_CLIENT) || ''; } catch (e) { return ''; } }
+function dbxClientId() {
+  const el = document.getElementById('sync-dbx-key');
+  const fromField = el ? el.value.trim() : '';
+  return fromField || dbxStoredClientId();
+}
+function dbxSaveClientId(v) { try { localStorage.setItem(DBX.LS_CLIENT, v); } catch (e) {} }
+function dbxRefreshToken() { try { return localStorage.getItem(DBX.LS_REFRESH) || ''; } catch (e) { return ''; } }
+
+function dbxB64Url(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function dbxPkcePair() {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  const verifier = dbxB64Url(arr);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return { verifier: verifier, challenge: dbxB64Url(new Uint8Array(digest)) };
+}
+function dbxTokenRedirectUri() { return location.origin + location.pathname; }
+
+// --- Вход в Dropbox: OAuth 2.0 + PKCE, ответ приходит с ?code=... на адрес приложения ---
+async function dbxConnect() {
+  const cid = dbxClientId();
+  if (!cid) { showAlert('Укажите App key приложения Dropbox в поле ниже. Получить его бесплатно можно за пару минут на dropbox.com/developers/apps — инструкция прямо под полем.'); return; }
+  dbxSaveClientId(cid);
+  let pk = null;
+  try { pk = await dbxPkcePair(); } catch (e) { showAlert('Браузер не смог создать защищённый ключ входа (PKCE): ' + e.message); return; }
+  const stateStr = 'dbx' + Math.random().toString(36).slice(2, 12);
+  try { localStorage.setItem(DBX.LS_PKCE, JSON.stringify({ v: pk.verifier, s: stateStr })); } catch (e) {}
+  const url = DBX.AUTH +
+    '?response_type=code' +
+    '&client_id=' + encodeURIComponent(cid) +
+    '&redirect_uri=' + encodeURIComponent(dbxTokenRedirectUri()) +
+    '&state=' + stateStr +
+    '&code_challenge=' + encodeURIComponent(pk.challenge) +
+    '&code_challenge_method=S256' +
+    '&token_access_type=offline' + // получить refresh-токен для авто-продления
+    '&scope=' + encodeURIComponent('files.content.read files.content.write');
+  let w = null;
+  try { w = window.open(url, 'dbx-oauth', 'width=520,height=680'); } catch (e) {}
+  if (!w || w.closed) { location.href = url; return; } // всплывающие окна заблокированы — вход в этом же окне
+  showToast('Откроется окно входа в Dropbox…');
+}
+async function dbxExchangeCode(code, verifier) {
+  const cid = dbxClientId();
+  const body = 'grant_type=authorization_code' +
+    '&code=' + encodeURIComponent(code) +
+    '&redirect_uri=' + encodeURIComponent(dbxTokenRedirectUri()) +
+    '&client_id=' + encodeURIComponent(cid) +
+    '&code_verifier=' + encodeURIComponent(verifier);
+  let r;
+  try { r = await fetch(DBX.API + '/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body }); }
+  catch (e) { throw new Error('Нет соединения с Dropbox (проверьте интернет)'); }
+  if (!r.ok) throw new Error('Dropbox не подтвердил вход (HTTP ' + r.status + '). Проверьте App key и Redirect URI в настройках приложения Dropbox.');
+  return await r.json();
+}
+function dbxSaveTokens(j) {
+  try {
+    localStorage.setItem(DBX.LS_ACCESS, j.access_token);
+    if (j.refresh_token) localStorage.setItem(DBX.LS_REFRESH, j.refresh_token);
+    localStorage.setItem(DBX.LS_EXP, String(Date.now() + (Number(j.expires_in) || 14400) * 1000));
+  } catch (e) {}
+}
+// Перехват ответа Dropbox на странице приложения (и во всплывающем окне входа,
+// и при полном переходе — если окна заблокированы). Аналог captureYdiskOAuth.
+(function captureDropboxOAuth() {
+  try {
+    if (!location.search || location.search.indexOf('code=') === -1) return;
+    const p = new URLSearchParams(location.search);
+    const code = p.get('code');
+    if (!code) return;
+    let pk = null;
+    try { pk = JSON.parse(localStorage.getItem(DBX.LS_PKCE) || 'null'); } catch (e) {}
+    history.replaceState(null, '', location.pathname); // убрать code из адресной строки сразу
+    if (!pk || (pk.s && p.get('state') !== pk.s)) return; // вход не начинали здесь или подделка ответа
+    dbxExchangeCode(code, pk.v).then((j) => {
+      dbxSaveTokens(j);
+      setCloudProvider('dropbox'); // входили именно в Dropbox — делаем его активным провайдером
+      try { localStorage.removeItem(DBX.LS_PKCE); } catch (e) {}
+      if (window.opener) {
+        try { window.opener.postMessage({ type: 'dbx-token' }, location.origin); } catch (e) {}
+        setTimeout(() => { try { window.close(); } catch (e) {} }, 300);
+      } else {
+        // полный переход страницы: приложение инициализируется чуть позже
+        setTimeout(() => { try { refreshSyncUI(); if (!isSyncTrusted()) runSync(true); } catch (e) {} }, 1200);
+      }
+    }).catch((e) => {
+      try { localStorage.removeItem(DBX.LS_PKCE); } catch (e2) {}
+      setTimeout(() => { try { showAlert('Не удалось подключить Dropbox: ' + e.message); } catch (e2) {} }, 800);
+    });
+  } catch (e) {}
+})();
+
+// Access-токен Dropbox живёт ~4 часа — продлеваем по refresh-токену автоматически
+async function dbxAccessToken(force) {
+  let at = ''; try { at = localStorage.getItem(DBX.LS_ACCESS) || ''; } catch (e) {}
+  const exp = Number(localStorage.getItem(DBX.LS_EXP)) || 0;
+  if (!force && at && Date.now() < exp - 60000) return at;
+  const rt = dbxRefreshToken();
+  const cid = dbxClientId();
+  if (!rt || !cid) { const err = new Error('Требуется вход в Dropbox'); err.code = 401; throw err; }
+  const body = 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(rt) + '&client_id=' + encodeURIComponent(cid);
+  let r;
+  try { r = await fetch(DBX.API + '/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body }); }
+  catch (e) { throw new Error('Нет соединения с Dropbox (проверьте интернет)'); }
+  if (!r.ok) { const err = new Error('Dropbox не продлил доступ — подключите облако заново в настройках'); err.code = 401; throw err; }
+  const j = await r.json();
+  dbxSaveTokens(j);
+  return j.access_token;
+}
+// Базовый запрос к Dropbox: авто-продление токена и один повтор при устаревании
+async function dbxCall(url, hdrs, body) {
+  let at = await dbxAccessToken();
+  let r = await fetch(url, { method: 'POST', headers: Object.assign({ Authorization: 'Bearer ' + at }, hdrs), body: body || null });
+  if (r.status === 401) {
+    at = await dbxAccessToken(true);
+    r = await fetch(url, { method: 'POST', headers: Object.assign({ Authorization: 'Bearer ' + at }, hdrs), body: body || null });
+  }
+  return r;
+}
+async function dbxFileExists() {
+  const r = await dbxCall(DBX.API + '/2/files/get_metadata', { 'Content-Type': 'application/json' }, JSON.stringify({ path: DBX.FILE }));
+  if (r.ok) { const j = await r.json(); return typeof j.size === 'number'; }
+  if (r.status === 409) {
+    const j = await r.json().catch(() => null);
+    if (j && j.error_summary && j.error_summary.indexOf('not_found') !== -1) return false;
+    throw new Error('Dropbox: ' + ((j && j.error_summary) || 'ошибка получения метаданных'));
+  }
+  throw new Error('Dropbox: HTTP ' + r.status);
+}
+async function dbxUploadTo(path, obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  const arg = JSON.stringify({ path: path, mode: { '.tag': 'overwrite' }, autorename: false, mute: true });
+  const r = await dbxCall(DBX.CONTENT + '/2/files/upload', { 'Content-Type': 'application/octet-stream', 'Dropbox-API-Arg': arg }, bytes);
+  if (!r.ok) {
+    const j = await r.json().catch(() => null);
+    throw new Error('Не удалось отправить файл в Dropbox: ' + ((j && j.error_summary) || ('HTTP ' + r.status)));
+  }
+  const j = await r.json().catch(() => null);
+  if (!j || j.size !== bytes.length) throw new Error('Dropbox не подтвердил размер файла. Попробуйте ещё раз.');
+}
+// Скачивание: 3 попытки с паузами — разовые сбои сети не роняют синхронизацию
+async function dbxDownloadJson() {
+  const arg = JSON.stringify({ path: DBX.FILE });
+  let lastErr = null;
+  for (let i = 0; i < 3; i++) {
+    if (i) await ydSleep(800 * i);
+    try {
+      const r = await dbxCall(DBX.CONTENT + '/2/files/download', { 'Dropbox-API-Arg': arg }, null);
+      if (!r.ok) {
+        if (r.status === 409) throw new Error('Файл в облаке пропал между проверками — нажмите «Синхронизировать» ещё раз');
+        lastErr = new Error('Не удалось скачать файл из Dropbox (HTTP ' + r.status + ')'); continue;
+      }
+      const parsed = JSON.parse(await r.text());
+      if (!parsed || parsed.app !== 'my-finance-app' || typeof parsed.savedAt !== 'number' || !parsed.data) throw new Error('Файл в облаке не похож на резервную копию этого приложения');
+      return parsed;
+    } catch (e) {
+      lastErr = e;
+      if (e.message && (e.message.indexOf('не похож') !== -1 || e.message.indexOf('пропал') !== -1)) throw e; // повторы не помогут
+    }
+  }
+  console.warn('Скачивание из Dropbox не удалось:', lastErr); // детали — в консоль (F12)
+  if (lastErr instanceof TypeError || /fetch/i.test(lastErr.message || '')) {
+    throw new Error('Браузер не смог связаться с Dropbox. Интернет при этом может работать: проверьте сеть, фильтры роутера/DNS и антивирус с проверкой HTTPS, затем нажмите «Синхронизировать» ещё раз.');
+  }
+  throw lastErr;
+}
+async function dbxBackupCloudFile() {
+  try {
+    const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    await dbxCall(DBX.API + '/2/files/copy_v2', { 'Content-Type': 'application/json' },
+      JSON.stringify({ from_path: DBX.FILE, to_path: DBX.BACKUP_DIR + '/cloud-' + ts + '.json', autorename: true }));
+  } catch (e) { /* резервная копия не критична — не мешаем основной операции */ }
+}
+
+// ==================== Выбор провайдера облака ====================
+function cloudProvider() { try { return localStorage.getItem(YD.LS_PROVIDER) === 'dropbox' ? 'dropbox' : 'yandex'; } catch (e) { return 'yandex'; } }
+function setCloudProvider(p) { try { localStorage.setItem(YD.LS_PROVIDER, p); } catch (e) {} }
+function cloudConnected() {
+  if (cloudProvider() === 'dropbox') return !!dbxRefreshToken();
+  return !!ydToken();
+}
+function cloudMainPath() { return cloudProvider() === 'dropbox' ? DBX.FILE : YD.FILE; }
+function cloudBackupPath(name) { return (cloudProvider() === 'dropbox' ? DBX.BACKUP_DIR : YD.BACKUP_DIR) + '/' + name; }
+async function cloudFileExists() { return cloudProvider() === 'dropbox' ? dbxFileExists() : ydFileExists(); }
+async function cloudDownloadJson() { return cloudProvider() === 'dropbox' ? dbxDownloadJson() : ydDownloadJson(); }
+async function cloudUploadFile(path, obj, verify) { return cloudProvider() === 'dropbox' ? dbxUploadTo(path, obj) : ydUploadTo(path, obj, verify); }
+
 function buildSyncBundle() {
   return {
     app: 'my-finance-app', formatVersion: 1, savedAt: Date.now(), savedBy: syncDeviceName(),
@@ -1288,10 +1500,14 @@ function buildSyncBundle() {
   };
 }
 async function pushBundleToCloud(silent) {
-  await ydEnsureFolders();
-  if (await ydFileExists()) await ydBackupCloudFile();
+  if (cloudProvider() === 'yandex') {
+    await ydEnsureFolders();
+    if (await ydFileExists()) await ydBackupCloudFile();
+  } else if (await dbxFileExists()) {
+    await dbxBackupCloudFile();
+  }
   const bundle = buildSyncBundle();
-  await ydUploadTo(YD.FILE, bundle, true);
+  await cloudUploadFile(cloudMainPath(), bundle, true);
   setLastSyncedAt(bundle.savedAt);
   setLocalLastChange(bundle.savedAt);
   if (!silent) showToast('Данные отправлены в облако');
@@ -1302,9 +1518,9 @@ async function syncPullReplace(cloud) {
   try {
     // Копия локальных данных в облако перед заменой (защита от потери уникальных записей)
     try {
-      await ydEnsureFolders();
+      if (cloudProvider() === 'yandex') await ydEnsureFolders();
       const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
-      await ydUploadTo(YD.BACKUP_DIR + '/local-' + ts + '.json', buildSyncBundle(), false);
+      await cloudUploadFile(cloudBackupPath('local-' + ts + '.json'), buildSyncBundle(), false);
     } catch (e) { /* не критично */ }
     await applyReplaceImport(cloud.data, true);
   } finally { suppressSyncDirty = false; }
@@ -1318,15 +1534,17 @@ async function runSync(interactive) {
   if (syncBusy) return;
   const cm = document.getElementById('modal-sync-conflict');
   if (cm && !cm.classList.contains('hidden')) return; // открыт диалог конфликта — ждём решения пользователя
-  if (!ydToken()) { if (interactive) showAlert('Сначала подключите облако — кнопка «Подключить облако» выше.'); return; }
-  const exp = ydTokenExp();
-  if (exp && Date.now() > exp) { if (interactive) showAlert('Срок подключения к Яндексу истёк. Нажмите «Подключить облако» — вход займёт пару секунд.'); return; }
+  if (!cloudConnected()) { if (interactive) showAlert('Сначала подключите облако — кнопка «Подключить облако» выше.'); return; }
+  if (cloudProvider() === 'yandex') {
+    const exp = ydTokenExp();
+    if (exp && Date.now() > exp) { if (interactive) showAlert('Срок подключения к Яндексу истёк. Нажмите «Подключить облако» — вход займёт пару секунд.'); return; }
+  }
   syncBusy = true;
   try {
-    await ydApi('GET', YD.API + '/v1/disk'); // проверка доступа и живости токена
-    await ydEnsureFolders();
-    const exists = await ydFileExists();
-    const cloud = exists ? await ydDownloadJson() : null;
+    if (cloudProvider() === 'yandex') await ydApi('GET', YD.API + '/v1/disk'); // проверка доступа и живости токена
+    if (cloudProvider() === 'yandex') await ydEnsureFolders();
+    const exists = await cloudFileExists();
+    const cloud = exists ? await cloudDownloadJson() : null;
     const lastSynced = getLastSyncedAt();
     const cloudNewer = !!cloud && cloud.savedAt > lastSynced;
     const localNewer = getLocalLastChange() > lastSynced;
@@ -1352,7 +1570,7 @@ function handleSyncError(e, interactive) {
   if (e && e.code === 401) {
     try { localStorage.removeItem(YD.LS_TOKEN); } catch (e2) {}
     refreshSyncUI();
-    showToast('Доступ к облаку истёк. Подключите Яндекс Диск заново в настройках.', 5000);
+    showToast('Доступ к облаку истёк. Подключите ' + (cloudProvider() === 'dropbox' ? 'Dropbox' : 'Яндекс Диск') + ' заново в настройках.', 5000);
     return;
   }
   const msg = (e && e.message) || 'неизвестная ошибка';
@@ -1429,7 +1647,7 @@ function ydiskConnect() {
 // выполняем первую синхронизацию (на новом устройстве, возможно, появится диалог).
 window.addEventListener('message', (e) => {
   if (e.origin !== location.origin) return;
-  if (e.data && e.data.type === 'ydisk-token') {
+  if (e.data && (e.data.type === 'ydisk-token' || e.data.type === 'dbx-token')) {
     refreshSyncUI();
     if (!isSyncTrusted()) runSync(true);
   }
@@ -1437,7 +1655,7 @@ window.addEventListener('message', (e) => {
 
 // --- Автосинхронизация при запуске и при возвращении в приложение ---
 function maybeAutoSync(delay) {
-  if (!ydToken() || !syncAutoOn() || !isSyncTrusted()) return;
+  if (!cloudConnected() || !syncAutoOn() || !isSyncTrusted()) return;
   // Первый раз на устройстве синхронизация выполняется только вручную:
   // приложение не станет молча менять данные без подтверждения владельца.
   const ms = typeof delay === 'number' ? delay : YD.AUTO_DELAY_MS;
@@ -1445,7 +1663,7 @@ function maybeAutoSync(delay) {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  if (!ydToken() || !syncAutoOn() || !isSyncTrusted()) return;
+  if (!cloudConnected() || !syncAutoOn() || !isSyncTrusted()) return;
   clearTimeout(maybeAutoSync._t);
   maybeAutoSync._t = setTimeout(() => { if (!syncBusy) runSync(false); }, 1500);
 });
@@ -1455,7 +1673,14 @@ function refreshSyncUI() {
   const st = document.getElementById('sync-status');
   if (!st) return;
   const byId = (id) => document.getElementById(id);
-  const connected = !!ydToken();
+  const prov = cloudProvider();
+  const py = byId('prov-yandex'), pd = byId('prov-dropbox');
+  if (py) py.classList.toggle('active', prov === 'yandex');
+  if (pd) pd.classList.toggle('active', prov === 'dropbox');
+  const yBlock = byId('sync-yandex-block'), dBlock = byId('sync-dropbox-block');
+  if (yBlock) yBlock.classList.toggle('hidden', prov !== 'yandex');
+  if (dBlock) dBlock.classList.toggle('hidden', prov !== 'dropbox');
+  const connected = cloudConnected();
   byId('btn-sync-connect').classList.toggle('hidden', connected);
   byId('btn-sync-now').classList.toggle('hidden', !connected);
   byId('btn-sync-restore').classList.toggle('hidden', !connected);
@@ -1464,12 +1689,19 @@ function refreshSyncUI() {
   if (autoRow) autoRow.classList.toggle('hidden', !connected);
   const auto = byId('sync-auto');
   if (auto) auto.checked = syncAutoOn();
+  if (!connected) { st.textContent = 'Не подключено. Данные хранятся только на этом устройстве.'; st.classList.remove('sync-warn'); return; }
+  const last = getLastSyncedAt();
+  if (prov === 'dropbox') {
+    const key = byId('sync-dbx-key');
+    if (key && document.activeElement !== key) key.value = dbxStoredClientId();
+    st.textContent = 'Подключено к Dropbox.' + (last ? ' Последняя синхронизация: ' + new Date(last).toLocaleString('ru-RU') + '.' : ' Синхронизация ещё не выполнялась — нажмите «Синхронизировать».');
+    st.classList.remove('sync-warn');
+    return;
+  }
   const cid = byId('sync-client-id');
   if (cid && document.activeElement !== cid) cid.value = ydStoredClientId() || YD.DEFAULT_CLIENT_ID;
-  if (!connected) { st.textContent = 'Не подключено. Данные хранятся только на этом устройстве.'; st.classList.remove('sync-warn'); return; }
   const exp = ydTokenExp();
   if (exp && Date.now() > exp) { try { localStorage.removeItem(YD.LS_TOKEN); } catch (e) {} refreshSyncUI(); return; }
-  const last = getLastSyncedAt();
   st.textContent = 'Подключено к Яндекс Диску.' + (last ? ' Последняя синхронизация: ' + new Date(last).toLocaleString('ru-RU') + '.' : ' Синхронизация ещё не выполнялась — нажмите «Синхронизировать».');
   st.classList.remove('sync-warn');
 }
@@ -1477,23 +1709,30 @@ function setupSyncUI() {
   const byId = (id) => document.getElementById(id);
   const btnConnect = byId('btn-sync-connect');
   if (!btnConnect) return;
-  btnConnect.onclick = ydiskConnect;
+  btnConnect.onclick = () => { if (cloudProvider() === 'dropbox') dbxConnect(); else ydiskConnect(); };
+  const py = byId('prov-yandex'), pd = byId('prov-dropbox');
+  if (py) py.onclick = () => { setCloudProvider('yandex'); refreshSyncUI(); };
+  if (pd) pd.onclick = () => { setCloudProvider('dropbox'); refreshSyncUI(); };
   byId('btn-sync-now').onclick = () => runSync(true);
   byId('btn-sync-restore').onclick = () => {
     showConfirm('Заменить ВСЕ данные этого устройства версией из облака? Локальные изменения будут удалены (перед заменой их копия сохранится в облаке).', async () => {
       if (syncBusy) return;
       syncBusy = true;
       try {
-        await ydApi('GET', YD.API + '/v1/disk');
-        const cloud = await ydDownloadJson();
+        if (cloudProvider() === 'yandex') await ydApi('GET', YD.API + '/v1/disk');
+        const cloud = await cloudDownloadJson();
         await syncPullReplace(cloud);
         refreshSyncUI();
       } catch (e) { handleSyncError(e, true); }
       finally { syncBusy = false; }
     });
   };
-  byId('btn-sync-disconnect').onclick = () => showConfirm('Отключить синхронизацию с Яндекс Диском? Данные на устройстве останутся как есть.', () => {
-    try { localStorage.removeItem(YD.LS_TOKEN); localStorage.removeItem(YD.LS_TOKEN_EXP); localStorage.removeItem(YD.LS_LAST_SYNC); } catch (e) {}
+  byId('btn-sync-disconnect').onclick = () => showConfirm('Отключить синхронизацию с облаком? Данные на устройстве останутся как есть.', () => {
+    try {
+      if (cloudProvider() === 'dropbox') { localStorage.removeItem(DBX.LS_ACCESS); localStorage.removeItem(DBX.LS_REFRESH); localStorage.removeItem(DBX.LS_EXP); }
+      else { localStorage.removeItem(YD.LS_TOKEN); localStorage.removeItem(YD.LS_TOKEN_EXP); }
+      localStorage.removeItem(YD.LS_LAST_SYNC);
+    } catch (e) {}
     refreshSyncUI();
     showToast('Синхронизация отключена');
   });
@@ -1501,6 +1740,8 @@ function setupSyncUI() {
   if (auto) auto.onchange = () => { try { localStorage.setItem(YD.LS_AUTO, auto.checked ? '1' : '0'); } catch (e) {} };
   const cid = byId('sync-client-id');
   if (cid) cid.onchange = () => ydSaveClientId(cid.value.trim());
+  const dkey = byId('sync-dbx-key');
+  if (dkey) dkey.onchange = () => dbxSaveClientId(dkey.value.trim());
   refreshSyncUI();
 }
 
@@ -1519,7 +1760,7 @@ async function init() {
   setupSyncUI();
   // Первое подключение облака в этом же окне (когда всплывающие окна заблокированы):
   // после возврата со страницы входа сразу выполняем первую синхронизацию.
-  if (ydToken() && !isSyncTrusted()) runSync(true);
+  if (cloudConnected() && !isSyncTrusted()) runSync(true);
   // Автосинхронизация при запуске — с паузой ~3 с, чтобы не мешать загрузке приложения
   // (запускается после полной отрисовки, сеть не блокирует: все запросы асинхронные).
   maybeAutoSync();

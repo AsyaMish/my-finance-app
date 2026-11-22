@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Мои финансы</title>
   <meta name="theme-color" content="#F0F7F3">
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=21">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon-512.png" type="image/png">
 </head>
@@ -218,7 +218,7 @@
         </div>
       </div>
       <div class="settings-section">
-        <h3>Синхронизация · Яндекс Диск</h3>
+        <h3>Синхронизация · Облако</h3>
         <div id="sync-status" class="sync-status">Не подключено. Данные хранятся только на этом устройстве.</div>
         <div class="sync-buttons">
           <button id="btn-sync-connect" class="btn-small">Подключить облако</button>
@@ -227,10 +227,22 @@
           <button id="btn-sync-disconnect" class="btn-small hidden">Отключить</button>
         </div>
         <label class="checkbox-label hidden" id="sync-auto-row"><input type="checkbox" id="sync-auto"> Автосинхронизация при запуске</label>
-        <label class="sync-client-row">ClientID приложения Яндекса
-          <input type="text" id="sync-client-id" placeholder="например, e15d9306f7b34c9a..." autocomplete="off" spellcheck="false">
-        </label>
-        <div class="hint" id="sync-hint">ClientID бесплатный, получается за пару минут на oauth.yandex.ru: «Создать приложение» → любое название → платформа «Веб-сервисы» → Redirect URI: https://asyamish.github.io/my-finance-app/index.html (второй вариант: https://asyamish.github.io/my-finance-app/) → доступы «Яндекс Диск REST API»: чтение всего Диска и запись в любом месте. Скопируйте полученный ClientID в поле выше и нажмите «Подключить облако».</div>
+        <div class="sync-providers">
+          <button id="prov-yandex" type="button" class="btn-small active">Яндекс Диск</button>
+          <button id="prov-dropbox" type="button" class="btn-small">Dropbox</button>
+        </div>
+        <div id="sync-yandex-block">
+          <label class="sync-client-row">ClientID приложения Яндекса
+            <input type="text" id="sync-client-id" placeholder="например, e15d9306f7b34c9a..." autocomplete="off" spellcheck="false">
+          </label>
+          <div class="hint" id="sync-hint">ClientID бесплатный, получается за пару минут на oauth.yandex.ru: «Создать приложение» → любое название → платформа «Веб-сервисы» → Redirect URI: https://asyamish.github.io/my-finance-app/index.html (второй вариант: https://asyamish.github.io/my-finance-app/) → доступы «Яндекс Диск REST API»: чтение всего Диска и запись в любом месте. Скопируйте полученный ClientID в поле выше и нажмите «Подключить облако».</div>
+        </div>
+        <div id="sync-dropbox-block" class="hidden">
+          <label class="sync-client-row">App key приложения Dropbox
+            <input type="text" id="sync-dbx-key" placeholder="например, slibevd3zc0fv9g" autocomplete="off" spellcheck="false">
+          </label>
+          <div class="hint">App key бесплатный, получается за пару минут на dropbox.com/developers/apps: «Create app» → любое название → «Scoped app» → доступ к данным «App folder» (отдельная папка, остальной Dropbox недоступен) → в разделе Permissions включить files.content.read и files.content.write → в разделе Settings добавить Redirect URI: https://asyamish.github.io/my-finance-app/ (точно такой адрес, со слэшем на конце) → скопировать App key в поле выше и нажмите «Подключить облако». Вход произойдёт в окне Dropbox, доступ приложения увидите в папке Apps.</div>
+        </div>
       </div>
       <div class="settings-section">
         <h3>Хранилище</h3>
@@ -405,6 +417,6 @@
   <template id="template-item-template"><div class="list-item"><div class="list-item-main"><span class="item-name"></span><span class="item-fields-count"></span></div><div class="item-actions"><button class="btn-small item-edit">✎</button><button class="btn-small item-delete">🗑</button></div></div></template>
   <template id="archive-item-template"><div class="archive-item"><div class="archive-item-main"><span class="arch-amount"></span><span class="arch-category"></span><span class="arch-date"></span><span class="arch-note"></span></div><button class="btn-small arch-restore">↩</button></div></template>
 
-  <script src="script.js?v=20" defer></script>
+  <script src="script.js?v=21" defer></script>
 </body>
 </html>
