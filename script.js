@@ -1246,13 +1246,27 @@ async function ydUploadTo(path, obj, verify) {
 async function ydDownloadJson() {
   const dl = await ydApi('GET', YD.API + '/v1/disk/resources/download?path=' + encodeURIComponent(YD.FILE));
   if (!dl || !dl.href) throw new Error('Яндекс не вернул ссылку для скачивания файла');
-  let r;
-  try { r = await fetch(dl.href); }
-  catch (e) { throw new Error('Не удалось скачать файл из облака. Проверьте интернет'); }
-  if (!r.ok) throw new Error('Не удалось скачать файл из облака (HTTP ' + r.status + ')');
-  const parsed = JSON.parse(await r.text());
-  if (!parsed || parsed.app !== 'my-finance-app' || typeof parsed.savedAt !== 'number' || !parsed.data) throw new Error('Файл в облаке не похож на резервную копию этого приложения');
-  return parsed;
+  // Скачиваем с 3 попытками: разовые сбои сети или CDN Яндекса не должны ронять синхронизацию
+  let lastErr = null;
+  for (let i = 0; i < 3; i++) {
+    if (i) await ydSleep(800 * i);
+    try {
+      const u = dl.href + (dl.href.includes('?') ? '&' : '?') + 'r' + i + '=' + Date.now(); // без кэша
+      const r = await fetch(u, { redirect: 'follow' });
+      if (!r.ok) { lastErr = new Error('Не удалось скачать файл из облака (HTTP ' + r.status + ')'); continue; }
+      const parsed = JSON.parse(await r.text());
+      if (!parsed || parsed.app !== 'my-finance-app' || typeof parsed.savedAt !== 'number' || !parsed.data) throw new Error('Файл в облаке не похож на резервную копию этого приложения');
+      return parsed;
+    } catch (e) {
+      lastErr = e;
+      if (e.message && e.message.indexOf('не похож') !== -1) throw e; // данные битые — повторы не помогут
+    }
+  }
+  console.warn('Скачивание из облака не удалось:', lastErr); // детали — в консоль (F12)
+  if (lastErr instanceof TypeError || /fetch/i.test(lastErr.message || '')) {
+    throw new Error('Браузер не смог скачать файл из облака. Интернет при этом может работать: чаще всего запрос блокирует расширение-блокировщик рекламы, строгая защита браузера или антивирус с проверкой HTTPS. Отключите блокировщики для этого сайта (или попробуйте другой браузер) и нажмите «Синхронизировать сейчас»');
+  }
+  throw lastErr;
 }
 async function ydBackupCloudFile() {
   try {
