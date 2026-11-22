@@ -1,7 +1,7 @@
-const CACHE_NAME = 'finance-app-v21';
+const CACHE_NAME = 'finance-app-v22';
 const ASSETS = [
-  './', './index.html', './style.css', './style.css?v=21',
-  './script.js', './script.js?v=21', './manifest.json', './icon-512.png'
+  './', './index.html', './style.css', './style.css?v=22',
+  './script.js', './script.js?v=22', './manifest.json', './icon-512.png'
 ];
 
 self.addEventListener('install', (e) => {

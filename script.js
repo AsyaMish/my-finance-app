@@ -1329,6 +1329,11 @@ function dbxTokenRedirectUri() { return location.origin + location.pathname; }
 async function dbxConnect() {
   const cid = dbxClientId();
   if (!cid) { showAlert('Укажите App key приложения Dropbox в поле ниже. Получить его бесплатно можно за пару минут на dropbox.com/developers/apps — инструкция прямо под полем.'); return; }
+  if (cid.length > 32) {
+    // Настоящий App key короткий (15 символов); длинный код — это App secret (приложению не нужен)
+    showAlert('Вставлен код длиной ' + cid.length + ' символов — Dropbox принимает только короткий App key (15 букв/цифр). Возьмите его на dropbox.com/developers/apps → ваше приложение → вкладка Settings → поле «App key» (первое сверху). Не вставляйте «App secret» — он длинный и приложению не нужен.');
+    return;
+  }
   dbxSaveClientId(cid);
   let pk = null;
   try { pk = await dbxPkcePair(); } catch (e) { showAlert('Браузер не смог создать защищённый ключ входа (PKCE): ' + e.message); return; }
