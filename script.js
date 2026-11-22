@@ -1323,7 +1323,10 @@ async function dbxPkcePair() {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
   return { verifier: verifier, challenge: dbxB64Url(new Uint8Array(digest)) };
 }
-function dbxTokenRedirectUri() { return location.origin + location.pathname; }
+function dbxTokenRedirectUri() {
+  // Dropbox требует точного совпадения адреса возврата; canonical-адрес — без index.html, со слэшем на конце
+  return (location.origin + location.pathname).replace(/index\.html$/, '');
+}
 
 // --- Вход в Dropbox: OAuth 2.0 + PKCE, ответ приходит с ?code=... на адрес приложения ---
 async function dbxConnect() {
