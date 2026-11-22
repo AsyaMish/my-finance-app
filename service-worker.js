@@ -1,7 +1,7 @@
-const CACHE_NAME = 'finance-app-v17';
+const CACHE_NAME = 'finance-app-v18';
 const ASSETS = [
-  './', './index.html', './style.css', './style.css?v=17',
-  './script.js', './script.js?v=17', './manifest.json', './icon-512.png'
+  './', './index.html', './style.css', './style.css?v=18',
+  './script.js', './script.js?v=18', './manifest.json', './icon-512.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -18,6 +18,11 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
+  const url = e.request.url;
+  // Внешние запросы (REST API Яндекс Диска, файлы загрузки/скачивания и т.п.)
+  // идут напрямую в сеть, минуя кэш: закэшированный ответ облака означал бы,
+  // что синхронизация получает устаревшие данные.
+  if (!url.startsWith(self.location.origin)) return;
   // Навигация (index.html): сначала сеть, кэш — только для офлайна
   if (e.request.mode === 'navigate') {
     e.respondWith(

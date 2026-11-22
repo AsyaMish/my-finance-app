@@ -71,8 +71,11 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 function openDB() { return new Promise((res, rej) => { const r = indexedDB.open(DB_NAME, DB_VERSION); r.onupgradeneeded = (e) => { const db = e.target.result; for (const n of STORES) { if (!db.objectStoreNames.contains(n)) db.createObjectStore(n, { keyPath: 'id' }); } }; r.onsuccess = (e) => res(e.target.result); r.onerror = (e) => rej(e.target.error); }); }
 function dbGetAll(store) { return new Promise((res, rej) => { const r = state.db.transaction(store, 'readonly').objectStore(store).getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error); }); }
-function dbPut(store, item) { return new Promise((res, rej) => { const tx = state.db.transaction(store, 'readwrite'); tx.objectStore(store).put(item); tx.oncomplete = () => res(item); tx.onerror = () => rej(tx.error); }); }
-function dbDelete(store, id) { return new Promise((res, rej) => { const tx = state.db.transaction(store, 'readwrite'); tx.objectStore(store).delete(id); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+// Отметка «данные менялись локально» — единственные точки записи в базу это dbPut/dbDelete/dbClearStore,
+// поэтому синхронизация отслеживает изменения здесь (см. модуль синхронизации внизу файла).
+function markLocalChange() { if (typeof suppressSyncDirty !== 'undefined' && suppressSyncDirty) return; try { localStorage.setItem('sync.lastChange', String(Date.now())); } catch (e) {} }
+function dbPut(store, item) { return new Promise((res, rej) => { const tx = state.db.transaction(store, 'readwrite'); tx.objectStore(store).put(item); tx.oncomplete = () => { markLocalChange(); res(item); }; tx.onerror = () => rej(tx.error); }); }
+function dbDelete(store, id) { return new Promise((res, rej) => { const tx = state.db.transaction(store, 'readwrite'); tx.objectStore(store).delete(id); tx.oncomplete = () => { markLocalChange(); res(); }; tx.onerror = () => rej(tx.error); }); }
 
 function getSystemTheme() { return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
 function applyTheme(theme) { const eff = theme === 'system' ? getSystemTheme() : theme; document.documentElement.setAttribute('data-theme', eff); const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', eff === 'dark' ? '#0E1512' : '#F0F7F3'); $$('input[name="theme"]').forEach(r => r.checked = (r.value === theme)); }
@@ -99,7 +102,7 @@ function clearFormDirty(f) { const m = f.closest('.modal'); if (m) m.dataset.dir
 function isFormDirty(f) { const m = f.closest('.modal'); return !!m && m.dataset.dirty === 'true'; }
 function tryCloseModal(id) { const m = document.getElementById(id); if (!m) return; const f = m.querySelector('form'); const doClose = () => { m.classList.add('hidden'); if (f) clearFormDirty(f); }; if (f && isFormDirty(f)) showConfirm('Закрыть без сохранения?', doClose); else doClose(); }
 
-async function loadAccounts() { state.accounts = await dbGetAll('accounts'); if (!state.accounts.length) { for (const a of DEFAULT_ACCOUNTS) await dbPut('accounts', a); state.accounts = [...DEFAULT_ACCOUNTS]; } }
+async function loadAccounts() { state.accounts = await dbGetAll('accounts'); if (!state.accounts.length) { suppressSyncDirty = true; for (const a of DEFAULT_ACCOUNTS) await dbPut('accounts', a); suppressSyncDirty = false; state.accounts = [...DEFAULT_ACCOUNTS]; } }
 function renderAccounts() { const l = document.getElementById('accounts-list'); if (!l) return; l.innerHTML = ''; const t = document.getElementById('account-item-template'); state.accounts.forEach(a => { const n = t.content.firstElementChild.cloneNode(true); n.dataset.id = a.id; n.querySelector('.item-name').textContent = a.name; n.querySelector('.item-balance').textContent = formatMoney(a.initialBalance) + ' ₽'; n.querySelector('.item-edit').onclick = () => editAccount(a.id); n.querySelector('.item-delete').onclick = () => deleteAccount(a.id); l.appendChild(n); }); renderDashboard(); }
 async function addAccount() {
   showPrompt('Название счёта:', '', (name) => {
@@ -113,7 +116,7 @@ async function addAccount() {
 async function editAccount(id) { const a = state.accounts.find(x => x.id === id); if (!a) return; showPrompt('Название:', a.name, (name) => { if (!name || !name.trim()) return; showPrompt('Остаток:', String(a.initialBalance), (bStr) => { a.name = name.trim(); a.initialBalance = round2(parseNumber(bStr)); dbPut('accounts', a).then(() => renderAccounts()); }); }); }
 async function deleteAccount(id) { if (state.accounts.length <= 1) { showAlert('Последний счёт нельзя удалить.'); return; } const a = state.accounts.find(x => x.id === id); if (!a) return; const ops = state.operations.filter(o => o.accountId === id); const doDelete = async () => { for (const o of ops) await dbDelete('operations', o.id); state.operations = state.operations.filter(o => o.accountId !== id); await dbDelete('accounts', id); state.accounts = state.accounts.filter(x => x.id !== id); renderAccounts(); renderOperations(); }; showConfirm(ops.length ? 'Удалить счёт и все его операции?' : 'Удалить счёт?', doDelete); }
 
-async function loadCategories() { state.categories = await dbGetAll('categories'); if (!state.categories.length) { const s = [...DEFAULT_INCOME_CATEGORIES, ...DEFAULT_EXPENSE_CATEGORIES]; for (const c of s) await dbPut('categories', c); state.categories = [...s]; } }
+async function loadCategories() { state.categories = await dbGetAll('categories'); if (!state.categories.length) { suppressSyncDirty = true; const s = [...DEFAULT_INCOME_CATEGORIES, ...DEFAULT_EXPENSE_CATEGORIES]; for (const c of s) await dbPut('categories', c); suppressSyncDirty = false; state.categories = [...s]; } }
 
 // === Категории по умолчанию (списки по скринам): одноразовая миграция существующих баз ===
 const CATS_MIGRATION_KEY = 'defaults_categories_v2';
@@ -178,7 +181,7 @@ async function moveCategory(id, dir) {
   await dbPut('categories', t[i]); await dbPut('categories', t[ni]); renderCategories();
 }
 
-async function loadTemplates() { state.templates = await dbGetAll('templates'); if (!state.templates.length) { for (const t of DEFAULT_TEMPLATES) await dbPut('templates', t); state.templates = JSON.parse(JSON.stringify(DEFAULT_TEMPLATES)); } }
+async function loadTemplates() { state.templates = await dbGetAll('templates'); if (!state.templates.length) { suppressSyncDirty = true; for (const t of DEFAULT_TEMPLATES) await dbPut('templates', t); suppressSyncDirty = false; state.templates = JSON.parse(JSON.stringify(DEFAULT_TEMPLATES)); } }
 function renderTemplates() {
   const l = document.getElementById('templates-list'); if (!l) return; l.innerHTML = ''; const t = document.getElementById('template-item-template');
   state.templates.sort((a,b) => (a.createdAt||0) - (b.createdAt||0)).forEach(tpl => {
@@ -677,7 +680,7 @@ async function dbClearStore(storeName) {
   return new Promise((res, rej) => {
     const tx = state.db.transaction(storeName, 'readwrite');
     tx.objectStore(storeName).clear();
-    tx.oncomplete = () => res();
+    tx.oncomplete = () => { markLocalChange(); res(); };
     tx.onerror = () => rej(tx.error);
   });
 }
@@ -741,7 +744,7 @@ function showPrompt(message, defaultValue, onOk) {
   setTimeout(() => { try { input.focus(); } catch (e) {} }, 80);
 }
 
-async function applyReplaceImport(data) {
+async function applyReplaceImport(data, quiet) {
   for (const s of STORES) await dbClearStore(s);
   const putAll = async (storeName, items) => {
     if (!Array.isArray(items)) return;
@@ -755,9 +758,9 @@ async function applyReplaceImport(data) {
   await putAll('archive', data.archive);
   await reloadAllStateAfterImport();
   renderEverythingAfterImport();
-  showAlert('Импорт завершён: все данные заменены на версию из файла.');
+  if (!quiet) showAlert('Импорт завершён: все данные заменены на версию из файла.');
 }
-async function applySmartMergeImport(data) {
+async function applySmartMergeImport(data, quiet) {
   const stats = { added: 0, updated: 0, kept: 0 };
   const mergeStore = async (storeName, items) => {
     if (!Array.isArray(items) || !items.length) return;
@@ -782,7 +785,8 @@ async function applySmartMergeImport(data) {
   await mergeStore('archive', data.archive);
   await reloadAllStateAfterImport();
   renderEverythingAfterImport();
-  showAlert('Слияние завершено.\nДобавлено новых записей: ' + stats.added + '\nОбновлено (взята более свежая версия): ' + stats.updated + '\nОставлено без изменений (текущая версия оказалась свежее): ' + stats.kept);
+  if (!quiet) showAlert('Слияние завершено.\nДобавлено новых записей: ' + stats.added + '\nОбновлено (взята более свежая версия): ' + stats.updated + '\nОставлено без изменений (текущая версия оказалась свежее): ' + stats.kept);
+  return stats;
 }
 let pendingImportData = null;
 let importChoiceBusy = false;
@@ -1116,6 +1120,355 @@ function setupArchive() {
   document.getElementById('archive-file-input').onchange = (e) => { const f = e.target.files[0]; if (f) importArchiveJSON(f); e.target.value = ''; };
 }
 
+// =====================================================================
+// ===== СИНХРОНИЗАЦИЯ ЧЕРЕЗ ЯНДЕКС ДИСК =====
+// Как это работает: все данные приложения (счета, категории, операции, долги,
+// шаблоны, архив) упаковываются в один JSON-файл и хранятся на Яндекс Диске
+// в папке /my-finance-app/. При каждом запуске приложения (с паузой ~3 с,
+// чтобы не мешать загрузке) и по кнопке «Синхронизировать» приложение
+// сравнивает три отметки времени — «локальные изменения», «файл в облаке»,
+// «последняя синхронизация» — и решает: подтянуть данные из облака,
+// отправить их в облако или показать диалог конфликта (если менялось и там,
+// и там). Перед перезаписью файла в облаке его предыдущая копия сохраняется
+// в /my-finance-app/backups/ — потерять данные при синхронизации невозможно.
+// =====================================================================
+const YD = {
+  API: 'https://cloud-api.yandex.net',
+  DIR: '/my-finance-app',                  // папка на Диске (создаётся автоматически)
+  FILE: '/my-finance-app/data.json',       // файл синхронизации
+  BACKUP_DIR: '/my-finance-app/backups',   // резервные копии
+  LS_TOKEN: 'sync.ydisk.token',
+  LS_TOKEN_EXP: 'sync.ydisk.tokenExp',
+  LS_CLIENT: 'sync.ydisk.clientId',
+  LS_STATE: 'sync.ydisk.oauthState',
+  LS_LAST_CHANGE: 'sync.lastChange',
+  LS_LAST_SYNC: 'sync.lastSyncedAt',
+  LS_AUTO: 'sync.auto',
+  DEFAULT_CLIENT_ID: '',                   // сюда можно вписать ClientID один раз — подставится на всех устройствах
+  AUTO_DELAY_MS: 3000,                     // пауза автосинхронизации после запуска приложения
+};
+
+var suppressSyncDirty = false; // не отмечать локальные изменения (загрузка из облака, засев дефолтных счетов/категорий)
+let syncBusy = false;          // синхронизация уже выполняется
+const ydSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// --- OAuth-токен: захват после входа в Яндекс ---
+// Токен возвращается в «хвосте» адреса страницы (#access_token=...). Этот блок
+// срабатывает и в окне входа (передаёт токен основному окну и закрывается),
+// и при полном переходе страницы — если всплывающие окна были заблокированы.
+(function captureYdiskOAuth() {
+  try {
+    if (!location.hash || location.hash.indexOf('access_token') === -1) return;
+    const p = new URLSearchParams(location.hash.slice(1));
+    const tok = p.get('access_token');
+    if (!tok) return;
+    const st = p.get('state');
+    const expected = localStorage.getItem(YD.LS_STATE);
+    if (expected && st && st !== expected) return; // защита от подделки ответа
+    const expiresIn = Number(p.get('expires_in')) || 31536000; // обычно 1 год
+    localStorage.setItem(YD.LS_TOKEN, tok);
+    localStorage.setItem(YD.LS_TOKEN_EXP, String(Date.now() + expiresIn * 1000));
+    localStorage.removeItem(YD.LS_STATE);
+    history.replaceState(null, '', location.pathname + location.search); // убрать токен из адресной строки
+    if (window.opener) {
+      try { window.opener.postMessage({ type: 'ydisk-token' }, location.origin); } catch (e) {}
+      setTimeout(() => { try { window.close(); } catch (e) {} }, 300);
+    }
+  } catch (e) {}
+})();
+
+function ydToken() { try { return localStorage.getItem(YD.LS_TOKEN) || ''; } catch (e) { return ''; } }
+function ydTokenExp() { try { return Number(localStorage.getItem(YD.LS_TOKEN_EXP)) || 0; } catch (e) { return 0; } }
+function ydStoredClientId() { try { return localStorage.getItem(YD.LS_CLIENT) || ''; } catch (e) { return ''; } }
+function ydClientId() {
+  const el = document.getElementById('sync-client-id');
+  const fromField = el ? el.value.trim() : '';
+  return fromField || ydStoredClientId() || YD.DEFAULT_CLIENT_ID;
+}
+function ydSaveClientId(v) { try { localStorage.setItem(YD.LS_CLIENT, v); } catch (e) {} }
+function getLocalLastChange() { try { return Number(localStorage.getItem(YD.LS_LAST_CHANGE)) || 0; } catch (e) { return 0; } }
+function setLocalLastChange(ms) { try { localStorage.setItem(YD.LS_LAST_CHANGE, String(ms)); } catch (e) {} }
+function getLastSyncedAt() { try { return Number(localStorage.getItem(YD.LS_LAST_SYNC)) || 0; } catch (e) { return 0; } }
+function setLastSyncedAt(ms) { try { localStorage.setItem(YD.LS_LAST_SYNC, String(ms)); } catch (e) {} }
+function isSyncTrusted() { try { return !!localStorage.getItem(YD.LS_LAST_SYNC); } catch (e) { return false; } }
+function syncAutoOn() { try { return localStorage.getItem(YD.LS_AUTO) !== '0'; } catch (e) { return true; } }
+function syncDeviceName() { return /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) ? 'Телефон' : 'Компьютер'; }
+
+// --- Запросы к REST API Яндекс Диска (cloud-api.yandex.net поддерживает CORS) ---
+async function ydApi(method, url) {
+  let r;
+  try { r = await fetch(url, { method, headers: { Authorization: 'OAuth ' + ydToken() } }); }
+  catch (e) { throw new Error('Нет соединения с Яндекс Диском (проверьте интернет)'); }
+  if (r.status === 401) { const err = new Error('Требуется вход в Яндекс'); err.code = 401; throw err; }
+  const text = await r.text();
+  let json = null; try { json = text ? JSON.parse(text) : null; } catch (e2) {}
+  if (!r.ok) { const err = new Error((json && json.message) || ('HTTP ' + r.status)); err.code = r.status; err.details = json; throw err; }
+  return json;
+}
+async function ydEnsureFolders() {
+  for (const p of [YD.DIR, YD.BACKUP_DIR]) {
+    try { await ydApi('PUT', YD.API + '/v1/disk/resources?path=' + encodeURIComponent(p)); }
+    catch (e) { if (e.code !== 409) throw e; } // 409 — папка уже существует, это нормально
+  }
+}
+function ydMetaSize(meta) {
+  if (!meta) return null;
+  if (typeof meta.size === 'number') return meta.size;
+  if (meta._embedded && typeof meta._embedded.size === 'number') return meta._embedded.size;
+  return null;
+}
+async function ydFileExists() {
+  try { const m = await ydApi('GET', YD.API + '/v1/disk/resources?path=' + encodeURIComponent(YD.FILE)); return ydMetaSize(m) != null; }
+  catch (e) { if (e.code === 404) return false; throw e; }
+}
+// Загрузка файла на Диск. Ссылку выдаёт API, она «предподписана» — авторизация
+// не нужна. Тело отправляется «простым» CORS-запросом (без заголовков, Content-Type
+// из безопасного списка), поэтому preflight не требуется и загрузка работает даже
+// если хост файлов не отвечает браузеру CORS-заголовками. Результат подтверждаем
+// по метаданным файла через API: размер в байтах должен совпасть.
+async function ydUploadTo(path, obj, verify) {
+  const body = JSON.stringify(obj);
+  const bytes = new TextEncoder().encode(body);
+  const up = await ydApi('GET', YD.API + '/v1/disk/resources/upload?overwrite=true&path=' + encodeURIComponent(path));
+  if (!up || !up.href) throw new Error('Яндекс не вернул ссылку для загрузки файла');
+  try { await fetch(up.href, { method: 'PUT', body: bytes, headers: { 'Content-Type': 'text/plain' } }); }
+  catch (e) { /* ответ может быть скрыт политикой CORS — результат проверяем по метаданным ниже */ }
+  if (!verify) return;
+  for (let i = 0; i < 4; i++) {
+    await ydSleep(600 * (i + 1));
+    try {
+      const m = await ydApi('GET', YD.API + '/v1/disk/resources?path=' + encodeURIComponent(path));
+      if (ydMetaSize(m) === bytes.length) return;
+    } catch (e) { if (e.code !== 404) throw e; }
+  }
+  throw new Error('Файл отправлен, но Яндекс пока не подтверждает его размер. Попробуйте ещё раз.');
+}
+async function ydDownloadJson() {
+  const dl = await ydApi('GET', YD.API + '/v1/disk/resources/download?path=' + encodeURIComponent(YD.FILE));
+  if (!dl || !dl.href) throw new Error('Яндекс не вернул ссылку для скачивания файла');
+  let r;
+  try { r = await fetch(dl.href); }
+  catch (e) { throw new Error('Не удалось скачать файл из облака. Проверьте интернет'); }
+  if (!r.ok) throw new Error('Не удалось скачать файл из облака (HTTP ' + r.status + ')');
+  const parsed = JSON.parse(await r.text());
+  if (!parsed || parsed.app !== 'my-finance-app' || typeof parsed.savedAt !== 'number' || !parsed.data) throw new Error('Файл в облаке не похож на резервную копию этого приложения');
+  return parsed;
+}
+async function ydBackupCloudFile() {
+  try {
+    const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    await ydApi('PUT', YD.API + '/v1/disk/resources/copy?from=' + encodeURIComponent(YD.FILE) + '&path=' + encodeURIComponent(YD.BACKUP_DIR + '/cloud-' + ts + '.json'));
+  } catch (e) { /* резервная копия не критична — не мешаем основной операции */ }
+}
+function buildSyncBundle() {
+  return {
+    app: 'my-finance-app', formatVersion: 1, savedAt: Date.now(), savedBy: syncDeviceName(),
+    data: { accounts: state.accounts, categories: state.categories, operations: state.operations, debts: state.debts, templates: state.templates, archive: state.archive },
+  };
+}
+async function pushBundleToCloud(silent) {
+  await ydEnsureFolders();
+  if (await ydFileExists()) await ydBackupCloudFile();
+  const bundle = buildSyncBundle();
+  await ydUploadTo(YD.FILE, bundle, true);
+  setLastSyncedAt(bundle.savedAt);
+  setLocalLastChange(bundle.savedAt);
+  if (!silent) showToast('Данные отправлены в облако');
+  return bundle;
+}
+async function syncPullReplace(cloud) {
+  suppressSyncDirty = true;
+  try {
+    // Копия локальных данных в облако перед заменой (защита от потери уникальных записей)
+    try {
+      await ydEnsureFolders();
+      const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+      await ydUploadTo(YD.BACKUP_DIR + '/local-' + ts + '.json', buildSyncBundle(), false);
+    } catch (e) { /* не критично */ }
+    await applyReplaceImport(cloud.data, true);
+  } finally { suppressSyncDirty = false; }
+  setLastSyncedAt(cloud.savedAt);
+  setLocalLastChange(cloud.savedAt);
+  showToast('Данные обновлены из облака');
+}
+
+// --- Главная процедура синхронизации ---
+async function runSync(interactive) {
+  if (syncBusy) return;
+  const cm = document.getElementById('modal-sync-conflict');
+  if (cm && !cm.classList.contains('hidden')) return; // открыт диалог конфликта — ждём решения пользователя
+  if (!ydToken()) { if (interactive) showAlert('Сначала подключите облако — кнопка «Подключить облако» выше.'); return; }
+  const exp = ydTokenExp();
+  if (exp && Date.now() > exp) { if (interactive) showAlert('Срок подключения к Яндексу истёк. Нажмите «Подключить облако» — вход займёт пару секунд.'); return; }
+  syncBusy = true;
+  try {
+    await ydApi('GET', YD.API + '/v1/disk'); // проверка доступа и живости токена
+    await ydEnsureFolders();
+    const exists = await ydFileExists();
+    const cloud = exists ? await ydDownloadJson() : null;
+    const lastSynced = getLastSyncedAt();
+    const cloudNewer = !!cloud && cloud.savedAt > lastSynced;
+    const localNewer = getLocalLastChange() > lastSynced;
+    if (!cloud) {
+      await pushBundleToCloud(false); // первого файла в облаке ещё нет — создаём
+    } else if (cloudNewer && localNewer) {
+      await openSyncConflictDialog(cloud);
+    } else if (cloudNewer) {
+      await syncPullReplace(cloud);
+    } else if (localNewer) {
+      await pushBundleToCloud(false);
+    } else if (interactive) {
+      showToast('Всё уже синхронизировано');
+    }
+    refreshSyncUI(); // успех — обновляем строку статуса
+  } catch (e) {
+    handleSyncError(e, interactive); // при ошибке статус с сообщением остаётся видимым
+  } finally {
+    syncBusy = false;
+  }
+}
+function handleSyncError(e, interactive) {
+  if (e && e.code === 401) {
+    try { localStorage.removeItem(YD.LS_TOKEN); } catch (e2) {}
+    refreshSyncUI();
+    showToast('Доступ к облаку истёк. Подключите Яндекс Диск заново в настройках.', 5000);
+    return;
+  }
+  const msg = (e && e.message) || 'неизвестная ошибка';
+  setSyncStatus('Ошибка синхронизации: ' + msg, true);
+  if (interactive) showToast('Ошибка синхронизации: ' + msg, 6000);
+}
+function setSyncStatus(text, warn) {
+  const st = document.getElementById('sync-status');
+  if (!st) return;
+  st.textContent = text;
+  st.classList.toggle('sync-warn', !!warn);
+}
+
+// --- Диалог конфликта: менялось и на устройстве, и в облаке ---
+function openSyncConflictDialog(cloud) {
+  const txt = document.getElementById('sync-conflict-text');
+  if (txt) {
+    const loc = getLocalLastChange() ? new Date(getLocalLastChange()).toLocaleString('ru-RU') : '—';
+    txt.textContent = 'Данные менялись и на этом устройстве (' + loc + '), и в облаке (' + new Date(cloud.savedAt).toLocaleString('ru-RU') + (cloud.savedBy ? ', с ' + cloud.savedBy : '') + '). Выберите, как поступить — при любом варианте данные не будут потеряны.';
+  }
+  const byId = (id) => document.getElementById(id);
+  openModal('modal-sync-conflict');
+  const finish = async (fn) => {
+    closeModal('modal-sync-conflict');
+    syncBusy = true;
+    try { await fn(); refreshSyncUI(); } catch (e) { handleSyncError(e, true); } finally { syncBusy = false; }
+  };
+  const mBtn = byId('btn-sync-merge');
+  if (mBtn) mBtn.onclick = () => finish(async () => {
+    suppressSyncDirty = true;
+    try { await applySmartMergeImport(cloud.data, true); } finally { suppressSyncDirty = false; }
+    await pushBundleToCloud(true);
+    showToast('Синхронизировано: версии объединены, результат отправлен в облако');
+  });
+  const pBtn = byId('btn-sync-pull-replace');
+  if (pBtn) pBtn.onclick = () => finish(async () => { await syncPullReplace(cloud); });
+  const puBtn = byId('btn-sync-push-replace');
+  if (puBtn) puBtn.onclick = () => finish(async () => { await pushBundleToCloud(false); });
+  const cBtn = byId('btn-sync-conflict-cancel');
+  if (cBtn) cBtn.onclick = () => closeModal('modal-sync-conflict');
+  const xBtn = byId('btn-sync-conflict-close');
+  if (xBtn) xBtn.onclick = () => closeModal('modal-sync-conflict');
+}
+
+// --- Вход в Яндекс (OAuth, implicit flow: токен приходит прямо в адрес страницы) ---
+function ydiskConnect() {
+  const cid = ydClientId();
+  if (!cid) { showAlert('Укажите ClientID приложения в поле ниже. Получить его бесплатно можно за пару минут на oauth.yandex.ru — инструкция прямо под полем.'); return; }
+  ydSaveClientId(cid);
+  const stateStr = 'sync' + Math.random().toString(36).slice(2, 12);
+  try { localStorage.setItem(YD.LS_STATE, stateStr); } catch (e) {}
+  const redirect = location.origin + location.pathname;
+  const url = 'https://oauth.yandex.ru/authorize?response_type=token&client_id=' + encodeURIComponent(cid) + '&redirect_uri=' + encodeURIComponent(redirect) + '&state=' + stateStr;
+  let w = null;
+  try { w = window.open(url, 'ydisk-oauth', 'width=520,height=680'); } catch (e) {}
+  if (!w || w.closed) { location.href = url; return; } // всплывающие окна заблокированы — вход в этом же окне
+  showToast('Откроется окно входа в Яндекс…');
+}
+// Окно входа сообщило, что токен получен: обновляем интерфейс и сразу
+// выполняем первую синхронизацию (на новом устройстве, возможно, появится диалог).
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin) return;
+  if (e.data && e.data.type === 'ydisk-token') {
+    refreshSyncUI();
+    if (!isSyncTrusted()) runSync(true);
+  }
+});
+
+// --- Автосинхронизация при запуске и при возвращении в приложение ---
+function maybeAutoSync(delay) {
+  if (!ydToken() || !syncAutoOn() || !isSyncTrusted()) return;
+  // Первый раз на устройстве синхронизация выполняется только вручную:
+  // приложение не станет молча менять данные без подтверждения владельца.
+  const ms = typeof delay === 'number' ? delay : YD.AUTO_DELAY_MS;
+  setTimeout(() => { if (!syncBusy) runSync(false); }, ms);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!ydToken() || !syncAutoOn() || !isSyncTrusted()) return;
+  clearTimeout(maybeAutoSync._t);
+  maybeAutoSync._t = setTimeout(() => { if (!syncBusy) runSync(false); }, 1500);
+});
+
+// --- Интерфейс синхронизации на экране настроек ---
+function refreshSyncUI() {
+  const st = document.getElementById('sync-status');
+  if (!st) return;
+  const byId = (id) => document.getElementById(id);
+  const connected = !!ydToken();
+  byId('btn-sync-connect').classList.toggle('hidden', connected);
+  byId('btn-sync-now').classList.toggle('hidden', !connected);
+  byId('btn-sync-restore').classList.toggle('hidden', !connected);
+  byId('btn-sync-disconnect').classList.toggle('hidden', !connected);
+  const autoRow = byId('sync-auto-row');
+  if (autoRow) autoRow.classList.toggle('hidden', !connected);
+  const auto = byId('sync-auto');
+  if (auto) auto.checked = syncAutoOn();
+  const cid = byId('sync-client-id');
+  if (cid && document.activeElement !== cid) cid.value = ydStoredClientId() || YD.DEFAULT_CLIENT_ID;
+  if (!connected) { st.textContent = 'Не подключено. Данные хранятся только на этом устройстве.'; st.classList.remove('sync-warn'); return; }
+  const exp = ydTokenExp();
+  if (exp && Date.now() > exp) { try { localStorage.removeItem(YD.LS_TOKEN); } catch (e) {} refreshSyncUI(); return; }
+  const last = getLastSyncedAt();
+  st.textContent = 'Подключено к Яндекс Диску.' + (last ? ' Последняя синхронизация: ' + new Date(last).toLocaleString('ru-RU') + '.' : ' Синхронизация ещё не выполнялась — нажмите «Синхронизировать».');
+  st.classList.remove('sync-warn');
+}
+function setupSyncUI() {
+  const byId = (id) => document.getElementById(id);
+  const btnConnect = byId('btn-sync-connect');
+  if (!btnConnect) return;
+  btnConnect.onclick = ydiskConnect;
+  byId('btn-sync-now').onclick = () => runSync(true);
+  byId('btn-sync-restore').onclick = () => {
+    showConfirm('Заменить ВСЕ данные этого устройства версией из облака? Локальные изменения будут удалены (перед заменой их копия сохранится в облаке).', async () => {
+      if (syncBusy) return;
+      syncBusy = true;
+      try {
+        await ydApi('GET', YD.API + '/v1/disk');
+        const cloud = await ydDownloadJson();
+        await syncPullReplace(cloud);
+        refreshSyncUI();
+      } catch (e) { handleSyncError(e, true); }
+      finally { syncBusy = false; }
+    });
+  };
+  byId('btn-sync-disconnect').onclick = () => showConfirm('Отключить синхронизацию с Яндекс Диском? Данные на устройстве останутся как есть.', () => {
+    try { localStorage.removeItem(YD.LS_TOKEN); localStorage.removeItem(YD.LS_TOKEN_EXP); localStorage.removeItem(YD.LS_LAST_SYNC); } catch (e) {}
+    refreshSyncUI();
+    showToast('Синхронизация отключена');
+  });
+  const auto = byId('sync-auto');
+  if (auto) auto.onchange = () => { try { localStorage.setItem(YD.LS_AUTO, auto.checked ? '1' : '0'); } catch (e) {} };
+  const cid = byId('sync-client-id');
+  if (cid) cid.onchange = () => ydSaveClientId(cid.value.trim());
+  refreshSyncUI();
+}
+
 async function init() {
   loadTheme(); state.db = await openDB();
   await loadAccounts(); await loadCategories(); await loadTemplates(); await loadOperations(); await loadDebts(); await loadArchive();
@@ -1128,6 +1481,13 @@ async function init() {
   const nAutoArchived = await autoArchiveOldOperations();
   if (nAutoArchived > 0) showToast('В архив перемещено записей: ' + nAutoArchived);
   showArchiveNotificationIfNeeded();
+  setupSyncUI();
+  // Первое подключение облака в этом же окне (когда всплывающие окна заблокированы):
+  // после возврата со страницы входа сразу выполняем первую синхронизацию.
+  if (ydToken() && !isSyncTrusted()) runSync(true);
+  // Автосинхронизация при запуске — с паузой ~3 с, чтобы не мешать загрузке приложения
+  // (запускается после полной отрисовки, сеть не блокирует: все запросы асинхронные).
+  maybeAutoSync();
 }
 
 document.addEventListener('submit', (e) => { e.preventDefault(); }, true);

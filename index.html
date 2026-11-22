@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Мои финансы</title>
   <meta name="theme-color" content="#F0F7F3">
-  <link rel="stylesheet" href="style.css?v=17">
+  <link rel="stylesheet" href="style.css?v=18">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon-512.png" type="image/png">
 </head>
@@ -218,6 +218,21 @@
         </div>
       </div>
       <div class="settings-section">
+        <h3>Синхронизация · Яндекс Диск</h3>
+        <div id="sync-status" class="sync-status">Не подключено. Данные хранятся только на этом устройстве.</div>
+        <div class="sync-buttons">
+          <button id="btn-sync-connect" class="btn-small">Подключить облако</button>
+          <button id="btn-sync-now" class="btn-small btn-primary hidden">⟳ Синхронизировать</button>
+          <button id="btn-sync-restore" class="btn-small hidden">Восстановить из облака</button>
+          <button id="btn-sync-disconnect" class="btn-small hidden">Отключить</button>
+        </div>
+        <label class="checkbox-label hidden" id="sync-auto-row"><input type="checkbox" id="sync-auto"> Автосинхронизация при запуске</label>
+        <label class="sync-client-row">ClientID приложения Яндекса
+          <input type="text" id="sync-client-id" placeholder="например, e15d9306f7b34c9a..." autocomplete="off" spellcheck="false">
+        </label>
+        <div class="hint" id="sync-hint">ClientID бесплатный, получается за пару минут на oauth.yandex.ru: «Создать приложение» → любое название → платформа «Веб-сервисы» → Redirect URI: https://asyamish.github.io/my-finance-app/index.html (второй вариант: https://asyamish.github.io/my-finance-app/) → доступы «Яндекс Диск REST API»: чтение всего Диска и запись в любом месте. Скопируйте полученный ClientID в поле выше и нажмите «Подключить облако».</div>
+      </div>
+      <div class="settings-section">
         <h3>Хранилище</h3>
         <div id="storage-info">Загрузка...</div>
         <div class="storage-bar"><div id="storage-bar-fill"></div></div>
@@ -345,6 +360,30 @@
     </div>
   </div>
 
+  <!-- ===== МОДАЛКА: КОНФЛИКТ СИНХРОНИЗАЦИИ ===== -->
+  <div id="modal-sync-conflict" class="modal hidden">
+    <div class="modal-content">
+      <button class="modal-x" id="btn-sync-conflict-close">×</button>
+      <h2>Конфликт синхронизации</h2>
+      <p id="sync-conflict-text" class="hint" style="margin-top:8px;"></p>
+      <div class="import-choice-options">
+        <button type="button" id="btn-sync-merge" class="import-choice-card">
+          <span class="import-choice-title">Объединить данные (без потерь)</span>
+          <span class="import-choice-desc">Из каждой записи берётся самая свежая версия. Результат сохранится и на устройстве, и в облаке.</span>
+        </button>
+        <button type="button" id="btn-sync-pull-replace" class="import-choice-card">
+          <span class="import-choice-title">Заменить всё данными из облака</span>
+          <span class="import-choice-desc">Локальные изменения будут удалены, на устройстве останется версия из облака.</span>
+        </button>
+        <button type="button" id="btn-sync-push-replace" class="import-choice-card">
+          <span class="import-choice-title">Отправить локальные данные в облако</span>
+          <span class="import-choice-desc">Версия в облаке будет заменена данными этого устройства (перед этим её копия сохранится в облаке).</span>
+        </button>
+      </div>
+      <div class="form-buttons"><button type="button" id="btn-sync-conflict-cancel" class="btn-secondary">Отмена</button></div>
+    </div>
+  </div>
+
   <!-- ===== ШАБЛОНЫ ===== -->
   <template id="operation-item-template">
     <div class="operation-item">
@@ -366,6 +405,6 @@
   <template id="template-item-template"><div class="list-item"><div class="list-item-main"><span class="item-name"></span><span class="item-fields-count"></span></div><div class="item-actions"><button class="btn-small item-edit">✎</button><button class="btn-small item-delete">🗑</button></div></div></template>
   <template id="archive-item-template"><div class="archive-item"><div class="archive-item-main"><span class="arch-amount"></span><span class="arch-category"></span><span class="arch-date"></span><span class="arch-note"></span></div><button class="btn-small arch-restore">↩</button></div></template>
 
-  <script src="script.js?v=17" defer></script>
+  <script src="script.js?v=18" defer></script>
 </body>
 </html>
