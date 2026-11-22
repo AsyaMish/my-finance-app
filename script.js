@@ -1243,16 +1243,21 @@ async function ydUploadTo(path, obj, verify) {
   }
   throw new Error('Файл отправлен, но Яндекс пока не подтверждает его размер. Попробуйте ещё раз.');
 }
+// Скачивание файла из облака. Ссылку выдаёт API, она предподписана — Authorization
+// не нужен. ВАЖНО: к предподписанной ссылке нельзя добавлять параметры (v19 так
+// делал — подпись переставала совпадать и Яндекс отвечал ошибкой), поэтому защита
+// от кэша делается опцией fetch cache:'no-store'. Ответ хоста файлов можно прочитать
+// только при CORS-заголовках; если их нет или ссылку блокирует сеть — остаётся
+// ручной запасной путь: браузер скачивает файл обычной загрузкой (это работает
+// всегда), данные импортируются штатным «Импортом JSON».
 async function ydDownloadJson() {
   const dl = await ydApi('GET', YD.API + '/v1/disk/resources/download?path=' + encodeURIComponent(YD.FILE));
   if (!dl || !dl.href) throw new Error('Яндекс не вернул ссылку для скачивания файла');
-  // Скачиваем с 3 попытками: разовые сбои сети или CDN Яндекса не должны ронять синхронизацию
   let lastErr = null;
   for (let i = 0; i < 3; i++) {
-    if (i) await ydSleep(800 * i);
+    if (i) await ydSleep(800 * i); // разовые сбои сети/CDN не должны ронять синхронизацию
     try {
-      const u = dl.href + (dl.href.includes('?') ? '&' : '?') + 'r' + i + '=' + Date.now(); // без кэша
-      const r = await fetch(u, { redirect: 'follow' });
+      const r = await fetch(dl.href, { redirect: 'follow', cache: 'no-store' });
       if (!r.ok) { lastErr = new Error('Не удалось скачать файл из облака (HTTP ' + r.status + ')'); continue; }
       const parsed = JSON.parse(await r.text());
       if (!parsed || parsed.app !== 'my-finance-app' || typeof parsed.savedAt !== 'number' || !parsed.data) throw new Error('Файл в облаке не похож на резервную копию этого приложения');
@@ -1264,7 +1269,9 @@ async function ydDownloadJson() {
   }
   console.warn('Скачивание из облака не удалось:', lastErr); // детали — в консоль (F12)
   if (lastErr instanceof TypeError || /fetch/i.test(lastErr.message || '')) {
-    throw new Error('Браузер не смог скачать файл из облака. Интернет при этом может работать: чаще всего запрос блокирует расширение-блокировщик рекламы, строгая защита браузера или антивирус с проверкой HTTPS. Отключите блокировщики для этого сайта (или попробуйте другой браузер) и нажмите «Синхронизировать сейчас»');
+    const err = new Error('Браузер не смог скачать файл из облака. Так бывает, когда ссылку блокирует сеть (роутер, DNS-фильтр, антивирус с проверкой HTTPS) или когда ответ нельзя читать из-за политики CORS. Если ошибка на всех устройствах сразу — вероятен фильтр на роутере: проверьте на мобильном интернете.');
+    err.rescueHref = dl.href; // для ручного скачивания в handleSyncError
+    throw err;
   }
   throw lastErr;
 }
@@ -1350,7 +1357,21 @@ function handleSyncError(e, interactive) {
   }
   const msg = (e && e.message) || 'неизвестная ошибка';
   setSyncStatus('Ошибка синхронизации: ' + msg, true);
-  if (interactive) showToast('Ошибка синхронизации: ' + msg, 6000);
+  if (interactive) {
+    // Ручной запасной путь: браузер скачивает файл обычной загрузкой (без CORS),
+    // затем данные импортируются штатным «Импортом JSON» — данные не теряются.
+    if (e && e.rescueHref) {
+      showConfirm('Автоматическое скачивание не удалось. Скачать копию данных из облака обычной загрузкой браузера и затем импортировать её через «Импорт JSON»?', () => {
+        const a = document.createElement('a');
+        a.href = e.rescueHref;
+        a.download = 'finance-cloud-copy.json';
+        document.body.appendChild(a); a.click(); a.remove();
+        showAlert('Файл data.json (копия из облака) сохранён в «Загрузки» — если он открылся в браузере как страница, нажмите Ctrl+S. Теперь: Настройки → «Импорт JSON» → выберите этот файл → «Объединить данные (без потерь)».');
+      });
+      return;
+    }
+    showToast('Ошибка синхронизации: ' + msg, 6000);
+  }
 }
 function setSyncStatus(text, warn) {
   const st = document.getElementById('sync-status');
